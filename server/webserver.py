@@ -5,6 +5,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
 from pymongo.errors import DuplicateKeyError
+from bson import ObjectId
 import os
 
 load_dotenv()
@@ -81,40 +82,48 @@ def login():
     else:
         return jsonify({"error": "Invalid username or password"}), 401
 
-@app.route('/api/v1/getPets', methods=['GET', 'OPTIONS'])
+
+@app.route('/api/v1/getPets', methods=['GET'])
 def get_all_pets():
+    # Connect to the database
     db = get_db_connection()
+
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
+    # Define collections
+    pet_info_collection = db['Pets_Info']
+
+    # Define the aggregation pipeline
     pipeline = [
         {
             "$lookup": {
-                "from": "Pet_Condition",            # Collection to join with
-                "localField": "pet_condition_id",   # Field in Pet_Info
-                "foreignField": "_id",              # Field in Pet_Condition
-                "as": "condition_info"              # Output field name for joined data
+                "from": "Pet_Condition",
+                "localField": "pet_condition_id",
+                "foreignField": "_id",
+                "as": "condition_info"
             }
         },
         {
             "$unwind": {
-                "path": "$condition_info",          # Unwind condition_info array
-                "preserveNullAndEmptyArrays": True  # Keep pets without condition info
+                "path": "$condition_info",
+                "preserveNullAndEmptyArrays": True
             }
         }
     ]
 
-    pet_info_collection = db['Pet_Info']
+    # Run the aggregation pipeline
     pets = list(pet_info_collection.aggregate(pipeline))
 
     # Convert ObjectIds to strings for JSON serialization
     for pet in pets:
         pet['_id'] = str(pet['_id'])
-        if pet.get('condition_info'):
+        if pet.get('condition_info') and '_id' in pet['condition_info']:
             pet['condition_info']['_id'] = str(pet['condition_info']['_id'])
 
+    # Return JSON response
     return jsonify(pets), 200
-    
+ 
 @app.route('/api/v1/getTop3', methods=['GET'])
 def get_Top3():
     db = get_db_connection()
@@ -122,36 +131,60 @@ def get_Top3():
         return jsonify({"error": "Database connection failed"}), 500
 
     try:
+        # Collection references
+        favourites_collection = db['Favourites']
+        pets_info_collection = db['Pets_Info']
+
+        # Automatically convert pet_id in Favourites to ObjectId if necessary
+        for favourite in favourites_collection.find():
+            pet_id = favourite.get('pet_id')
+            
+            # Ensure pet_id is not already an ObjectId and is of a type that can be converted
+            if pet_id and not isinstance(pet_id, ObjectId):
+                try:
+                    # Attempt to find a matching document in Pets_Info
+                    pet_info = pets_info_collection.find_one({"_id": ObjectId(str(pet_id).zfill(24))})
+                    
+                    # If a matching document is found, update pet_id to ObjectId in Favourites
+                    if pet_info:
+                        favourites_collection.update_one(
+                            {'_id': favourite['_id']},
+                            {'$set': {'pet_id': ObjectId(str(pet_id).zfill(24))}}
+                        )
+                        print(f"Converted pet_id for document with _id {favourite['_id']} to ObjectId")
+                except Exception as e:
+                    print(f"Error converting pet_id for document with _id {favourite['_id']}: {e}")
+
         # Define the aggregation pipeline for MongoDB
         pipeline = [
             {"$lookup": {
-                "from": "Pet_Info",
+                "from": "Pets_Info",
                 "localField": "pet_id",
                 "foreignField": "_id",
-                "as": "pet_info"
+                "as": "pets_info"
             }},
-            {"$unwind": "$pet_info"},
+            {"$unwind": "$pets_info"},
             {"$group": {
-                "_id": "$pet_info._id",
+                "_id": "$pets_info._id",
                 "favourite_count": {"$sum": 1},
-                "pet_info": {"$first": "$pet_info"}
+                "pets_info": {"$first": "$pets_info"}
             }},
             {"$sort": {"favourite_count": -1}},
             {"$limit": 3}
         ]
 
         # Perform the aggregation
-        favourites_collection = db['Favourites']
         top3pets = list(favourites_collection.aggregate(pipeline))
+        print("Top 3 pets after aggregation:", top3pets)
 
-        # Convert ObjectId to strings for compatibility with JSON
+        # Convert ObjectId fields to strings for compatibility with JSON
         for pet in top3pets:
             pet['_id'] = str(pet['_id'])
-            pet['pet_info']['_id'] = str(pet['pet_info']['_id'])
+            pet['pets_info']['_id'] = str(pet['pets_info']['_id'])
 
-            # Convert any other ObjectId fields (e.g., images) if they exist in pet_info
-            if 'image' in pet['pet_info'] and isinstance(pet['pet_info']['image'], ObjectId):
-                pet['pet_info']['image'] = str(pet['pet_info']['image'])
+            # Convert any other ObjectId fields (e.g., images) if they exist in pets_info
+            if 'image' in pet['pets_info'] and isinstance(pet['pets_info']['image'], ObjectId):
+                pet['pets_info']['image'] = str(pet['pets_info']['image'])
         
         return jsonify(top3pets), 200
 
