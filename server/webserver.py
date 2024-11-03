@@ -28,6 +28,11 @@ def get_db_connection():
 def index():
     return jsonify({"message": "index"}), 200
 
+"""
+--- User Log In Endpoints ---
+
+"""
+
 @app.route('/api/v1/register', methods=['POST'])
 def register():
     data = request.json
@@ -49,7 +54,6 @@ def register():
         last_user = user_collection.find_one(sort=[("user_id", -1)])
         # If there is no user, start from 1; otherwise, increment from the maximum
         next_user_id = last_user['user_id'] + 1 if last_user else 1
-
         # Insert the new user with the next user_id
         user_collection.insert_one({
             "user_id": next_user_id,
@@ -89,25 +93,23 @@ def login():
     else:
         return jsonify({"error": "Invalid username or password"}), 401
 
-# working (done)
+"""
+--- Pets Endpoints ---
+"""
+
 @app.route('/api/v1/getPets', methods=['GET'])
 def get_all_pets():
-    # Connect to the database
     db = get_db_connection()
 
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
-
-    # Define collections
     pet_info_collection = db['Pets_Info']
-
-    # Define the aggregation pipeline
     pipeline = [
         {
             "$lookup": {
                 "from": "Pet_Condition",
                 "localField": "pet_condition_id",
-                "foreignField": "_id",
+                "foreignField": "pet_condition_id",
                 "as": "condition_info"
             }
         },
@@ -118,62 +120,54 @@ def get_all_pets():
             }
         }
     ]
-
-    # Run the aggregation pipeline
     pets = list(pet_info_collection.aggregate(pipeline))
 
-    # Convert ObjectIds to strings for JSON serialization
     for pet in pets:
         pet['_id'] = str(pet['_id'])
         if pet.get('condition_info') and '_id' in pet['condition_info']:
             pet['condition_info']['_id'] = str(pet['condition_info']['_id'])
-
-    # Return JSON response
     return jsonify(pets), 200
  
- #working (done)
 @app.route('/api/v1/getTop3', methods=['GET'])
 def get_top3():
-    db = get_db_connection()  # Assuming this returns a MongoDB client with the target database
+    db = get_db_connection()  
 
     if db is None:
-        return jsonify([]), 500  # Return an empty array in case of failure
+        return jsonify([]), 500  
 
     try:
-        # Use aggregation to join, group, and sort
         top3_pets = list(db['Pets_Info'].aggregate([
             {
                 "$lookup": {
-                    "from": "Favourites",        # Join with Favourites collection
-                    "localField": "pet_id",      # Field in Pet_Info collection
-                    "foreignField": "pet_id",    # Field in Favourites collection
-                    "as": "favourites"           # Resulting array field name
+                    "from": "Favourites",   
+                    "localField": "pet_id",      
+                    "foreignField": "pet_id",    
+                    "as": "favourites"          
                 }
             },
             {
                 "$addFields": {
-                    "favourite_count": {"$size": "$favourites"}  # Count the number of favorites
+                    "favourite_count": {"$size": "$favourites"} 
                 }
             },
             {
-                "$sort": {"favourite_count": -1}  # Sort by favourite_count in descending order
+                "$sort": {"favourite_count": -1} 
             },
             {
-                "$limit": 3  # Limit to top 3
+                "$limit": 3 
             },
             {
                 "$project": {
-                    "favourites": 0  # Exclude the favourites array from the final output
+                    "favourites": 0 
                 }
             }
         ]))
 
-        # Convert ObjectId fields to strings
         for pet in top3_pets:
             if '_id' in pet:
                 pet['_id'] = str(pet['_id'])
 
-        return jsonify(top3_pets), 200  # Return the JSON response
+        return jsonify(top3_pets), 200 
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
