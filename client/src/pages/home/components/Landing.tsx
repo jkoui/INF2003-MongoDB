@@ -17,7 +17,6 @@ export default function Landing(): JSX.Element {
           },
         });
         const data = await response.json();
-        console.log("Top Pets Data:", data); // Debugging line
         setTopPets(data);
       } catch (error) {
         console.error("Error fetching top pets:", error);
@@ -47,15 +46,11 @@ export default function Landing(): JSX.Element {
           Top 3 Favourite Pets
         </h2>
 
-        {error ? (
-          <p className="text-red-500 text-center">{error}</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {topPets.map((pet) => (
-              <PetCard key={pet.pet_info.pet_id} petDetails={pet.pet_info} />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {topPets.map((pet) => (
+            <PetCard key={pet.pet_id} petDetails={pet} />
+          ))}
+        </div>
       </div>
     </div>
   );

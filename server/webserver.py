@@ -45,12 +45,19 @@ def register():
     user_collection = db['Users']
     
     try:
+        # Find the current maximum user_id
+        last_user = user_collection.find_one(sort=[("user_id", -1)])
+        # If there is no user, start from 1; otherwise, increment from the maximum
+        next_user_id = last_user['user_id'] + 1 if last_user else 1
+
+        # Insert the new user with the next user_id
         user_collection.insert_one({
+            "user_id": next_user_id,
             "username": username,
             "password": hashed_password,
             "role": "adopter"
         })
-        return jsonify({"message": "User registered successfully"}), 201
+        return jsonify({"message": "User registered successfully", "user_id": next_user_id}), 201
 
     except DuplicateKeyError:
         return jsonify({"error": "Username already exists"}), 400
@@ -82,7 +89,7 @@ def login():
     else:
         return jsonify({"error": "Invalid username or password"}), 401
 
-
+# working (done)
 @app.route('/api/v1/getPets', methods=['GET'])
 def get_all_pets():
     # Connect to the database
@@ -124,100 +131,86 @@ def get_all_pets():
     # Return JSON response
     return jsonify(pets), 200
  
+ #working (done)
 @app.route('/api/v1/getTop3', methods=['GET'])
-def get_Top3():
+def get_top3():
+    db = get_db_connection()  # Assuming this returns a MongoDB client with the target database
+
+    if db is None:
+        return jsonify([]), 500  # Return an empty array in case of failure
+
+    try:
+        # Use aggregation to join, group, and sort
+        top3_pets = list(db['Pets_Info'].aggregate([
+            {
+                "$lookup": {
+                    "from": "Favourites",        # Join with Favourites collection
+                    "localField": "pet_id",      # Field in Pet_Info collection
+                    "foreignField": "pet_id",    # Field in Favourites collection
+                    "as": "favourites"           # Resulting array field name
+                }
+            },
+            {
+                "$addFields": {
+                    "favourite_count": {"$size": "$favourites"}  # Count the number of favorites
+                }
+            },
+            {
+                "$sort": {"favourite_count": -1}  # Sort by favourite_count in descending order
+            },
+            {
+                "$limit": 3  # Limit to top 3
+            },
+            {
+                "$project": {
+                    "favourites": 0  # Exclude the favourites array from the final output
+                }
+            }
+        ]))
+
+        # Convert ObjectId fields to strings
+        for pet in top3_pets:
+            if '_id' in pet:
+                pet['_id'] = str(pet['_id'])
+
+        return jsonify(top3_pets), 200  # Return the JSON response
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/addFavourite', methods=['POST'])
+def addFavourite():
     db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    try:
-        # Collection references
-        favourites_collection = db['Favourites']
-        pets_info_collection = db['Pets_Info']
-
-        # Automatically convert pet_id in Favourites to ObjectId if necessary
-        for favourite in favourites_collection.find():
-            pet_id = favourite.get('pet_id')
-            
-            # Ensure pet_id is not already an ObjectId and is of a type that can be converted
-            if pet_id and not isinstance(pet_id, ObjectId):
-                try:
-                    # Attempt to find a matching document in Pets_Info
-                    pet_info = pets_info_collection.find_one({"_id": ObjectId(str(pet_id).zfill(24))})
-                    
-                    # If a matching document is found, update pet_id to ObjectId in Favourites
-                    if pet_info:
-                        favourites_collection.update_one(
-                            {'_id': favourite['_id']},
-                            {'$set': {'pet_id': ObjectId(str(pet_id).zfill(24))}}
-                        )
-                        print(f"Converted pet_id for document with _id {favourite['_id']} to ObjectId")
-                except Exception as e:
-                    print(f"Error converting pet_id for document with _id {favourite['_id']}: {e}")
-
-        # Define the aggregation pipeline for MongoDB
-        pipeline = [
-            {"$lookup": {
-                "from": "Pets_Info",
-                "localField": "pet_id",
-                "foreignField": "_id",
-                "as": "pets_info"
-            }},
-            {"$unwind": "$pets_info"},
-            {"$group": {
-                "_id": "$pets_info._id",
-                "favourite_count": {"$sum": 1},
-                "pets_info": {"$first": "$pets_info"}
-            }},
-            {"$sort": {"favourite_count": -1}},
-            {"$limit": 3}
-        ]
-
-        # Perform the aggregation
-        top3pets = list(favourites_collection.aggregate(pipeline))
-        print("Top 3 pets after aggregation:", top3pets)
-
-        # Convert ObjectId fields to strings for compatibility with JSON
-        for pet in top3pets:
-            pet['_id'] = str(pet['_id'])
-            pet['pets_info']['_id'] = str(pet['pets_info']['_id'])
-
-            # Convert any other ObjectId fields (e.g., images) if they exist in pets_info
-            if 'image' in pet['pets_info'] and isinstance(pet['pets_info']['image'], ObjectId):
-                pet['pets_info']['image'] = str(pet['pets_info']['image'])
-        
-        return jsonify(top3pets), 200
-
-    except Exception as e:
-        print("Error in getTop3 aggregation:", str(e))
-        return jsonify({"error": "Failed to retrieve top pets"}), 500
-
-@app.route('/api/v1/addFavourite', methods=['POST'])
-def addFavourite():
     data = request.json
     pet_id = data.get('pet_id')
     user_id = data.get('user_id')
 
-    if not pet_id:
-        return jsonify({"error": "Pet ID is required"}), 400
+    if not pet_id or not user_id:
+        return jsonify({"error": "Pet ID and User ID are required"}), 400
 
-    db = get_db_connection()
-    if db is None:
-        return jsonify({"error": "Database connection failed"}), 500
+    # Convert pet_id to ObjectId if it's a valid integer
+    if isinstance(pet_id, int):
+        pet_id = str(pet_id)  # Convert to string for ObjectId compatibility
+
+    # Wrap pet_id in ObjectId if it's a string
+    try:
+        pet_id = ObjectId(pet_id)
+    except Exception as e:
+        return jsonify({"error": f"Invalid pet_id format: {e}"}), 400
 
     favourites_collection = db['Favourites']
 
-    # Check if pet is already in the user's favorites
-    if favourites_collection.find_one({"user_id": user_id, "pet_id": pet_id}):
+    # Check if the pet is already in favourites
+    existing_favourite = favourites_collection.find_one({"user_id": user_id, "pet_id": pet_id})
+    if existing_favourite:
         return jsonify({"error": "Pet is already in favourites"}), 400
 
-    # Insert the favourite pet into the Favourites collection
-    try:
-        favourites_collection.insert_one({"user_id": user_id, "pet_id": pet_id})
-        return jsonify({"message": "Pet added to favourites successfully"}), 201
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    # Add to favourites
+    favourites_collection.insert_one({"user_id": user_id, "pet_id": pet_id})
+    return jsonify({"message": "Pet added to favourites successfully"}), 201
     
 @app.route('/api/v1/getReservedPets', methods=['GET'])
 def get_reserved_pets():
@@ -225,30 +218,25 @@ def get_reserved_pets():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    try:
-        # Use aggregation to join Pet_Info and Applications collections
-        pipeline = [
-            {"$lookup": {
-                "from": "Applications",
-                "localField": "_id",
-                "foreignField": "pet_id",
-                "as": "application_info"
-            }},
-            {"$match": {"application_info": {"$ne": []}}}  # Filter only pets with applications
-        ]
+    pipeline = [
+        {"$lookup": {
+            "from": "Applications",
+            "localField": "_id",
+            "foreignField": "pet_id",
+            "as": "application_info"
+        }},
+        {"$match": {"application_info": {"$ne": []}}}  # Only include pets with applications
+    ]
 
-        pet_info_collection = db['Pet_Info']
-        reserved_pets = list(pet_info_collection.aggregate(pipeline))
+    pets_in_applications = list(db["Pets_Info"].aggregate(pipeline))
 
-        # Convert ObjectIds to strings
-        for pet in reserved_pets:
-            pet['_id'] = str(pet['_id'])
+    # Convert ObjectIds to strings for JSON compatibility
+    for pet in pets_in_applications:
+        pet['_id'] = str(pet['_id'])
 
-        return jsonify(reserved_pets), 200
+    return jsonify(pets_in_applications), 200
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
+
 @app.route('/api/v1/getFavourites', methods=['GET'])
 def getFavourites():
     user_id = request.args.get('user_id')
@@ -259,31 +247,23 @@ def getFavourites():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    try:
-        # Use aggregation to join Favourites with Pet_Info based on pet_id
-        pipeline = [
-            {"$match": {"user_id": user_id}},
-            {"$lookup": {
-                "from": "Pet_Info",
-                "localField": "pet_id",
-                "foreignField": "_id",
-                "as": "pet_info"
-            }},
-            {"$unwind": "$pet_info"}
-        ]
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$lookup": {
+            "from": "Pets_Info",
+            "localField": "pet_id",
+            "foreignField": "_id",
+            "as": "pets_info"
+        }},
+        {"$unwind": "$pets_info"}
+    ]
 
-        favourites_collection = db['Favourites']
-        favourited_pets = list(favourites_collection.aggregate(pipeline))
+    favourited_pets = list(db["Favourites"].aggregate(pipeline))
 
-        # Format each document for JSON response
-        for pet in favourited_pets:
-            pet['pet_info']['_id'] = str(pet['pet_info']['_id'])
-            pet['_id'] = str(pet['_id'])
+    # Convert ObjectIds to strings for JSON compatibility
+    for pet in favourited_pets:
+        pet['_id'] = str(pet['_id'])
+        pet['pets_info']['_id'] = str(pet['pets_info']['_id'])
 
-        # Only return pet_info field (the pet details)
-        favourited_pets = [pet['pet_info'] for pet in favourited_pets]
-
-        return jsonify(favourited_pets), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    # Return only the pet_info details
+    return jsonify([pet['pets_info'] for pet in favourited_pets]), 200
