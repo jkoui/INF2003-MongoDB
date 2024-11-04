@@ -3,7 +3,7 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
 import os
@@ -437,4 +437,186 @@ def remove_from_cart():
         return jsonify("Success"), 200
 
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# WORKING
+@app.route('/api/v1/confirmReservation', methods=['POST'])
+def confirm_reservation():
+    data = request.json
+    user_id = data.get('user_id')
+    cart = data.get('cart')
+
+    if not user_id or not cart:
+        return jsonify({"error": "Missing user_id or cart"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    applications_collection = db['Applications']
+    cart_collection = db['Cart']
+
+    try:
+        # For each pet in the cart, create a new application
+        for item in cart:
+            pet_id = item.get('pet_id')
+            submission_date = datetime.now(timezone.utc)
+            status = 'pending'
+
+            # Find the current maximum application_id and increment it
+            last_application = applications_collection.find_one(sort=[("application_id", -1)])
+            next_application_id = last_application['application_id'] + 1 if last_application else 1
+
+            # Insert the new application
+            applications_collection.insert_one({
+                "application_id": next_application_id,
+                "user_id": user_id,
+                "pet_id": pet_id,
+                "submission_date": submission_date,
+                "status": status
+            })
+
+        # Remove all items from the Cart collection for this user
+        cart_collection.delete_many({"user_id": user_id})
+
+        return jsonify("Success"), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+"""
+--- Admin Endpoints ---
+"""
+
+# WORKING
+@app.route('/api/v1/admin/deletePet', methods=['POST'])
+def admin_login():
+    data = request.json
+    pet_id = data.get('pet_id')
+    user_id = data.get('user_id')
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    users_collection = db['Users']
+    pet_info_collection = db['Pets_Info']
+    pet_condition_collection = db['Pet_Condition']
+    favourites_collection = db['Favourites']
+    cart_collection = db['Cart']
+    applications_collection = db['Applications']
+
+    try:
+        # Check if the user has admin permissions
+        user = users_collection.find_one({"user_id": user_id})
+        if not user or user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 400
+
+        # Get the pet_condition_id from Pet_Info
+        pet_info = pet_info_collection.find_one({"pet_id": pet_id})
+        if pet_info is None:
+            return jsonify({"error": "Pet not found"}), 404
+
+        pet_condition_id = pet_info.get("pet_condition_id")
+
+        # Delete associated records in Favourites, Cart, and Applications
+        favourites_collection.delete_many({"pet_id": pet_id})
+        cart_collection.delete_many({"pet_id": pet_id})
+        applications_collection.delete_many({"pet_id": pet_id})
+
+        # Delete the pet from Pet_Info
+        pet_info_collection.delete_one({"pet_id": pet_id})
+
+        # Delete the pet condition from Pet_Condition
+        pet_condition_collection.delete_one({"pet_condition_id": pet_condition_id})
+
+        return jsonify({"message": "Pet deleted successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# half working (no pet conditions)
+@app.route('/api/v1/admin/editPet', methods=['POST'])
+def admin_edit_pet():
+    data = request.json
+    pet_data = data.get('pet_data')
+    user_id = data.get('user_id')
+    pet_id = pet_data.get('pet_id')
+
+    if not pet_data or not user_id:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    users_collection = db['Users']
+    pet_info_collection = db['Pets_Info']
+    pet_condition_collection = db['Pet_Condition']
+
+    try:
+        # Check if the user has admin permissions
+        user = users_collection.find_one({"user_id": user_id})
+        if not user or user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 400
+
+        # Get the pet_condition_id from Pet_Info
+        pet_info = pet_info_collection.find_one({"pet_id": pet_id})
+        if pet_info is None:
+            return jsonify({"error": "Pet not found"}), 404
+
+        pet_condition_id = pet_info.get("pet_condition_id")
+
+        # Parse vaccination_date if present
+        vaccination_date_str = pet_data.get('vaccination_date')
+        formatted_vaccination_date = None
+        if vaccination_date_str:
+            try:
+                formatted_vaccination_date = datetime.strptime(vaccination_date_str, '%a, %d %b %Y %H:%M:%S %Z')
+            except ValueError as e:
+                print(f"Error parsing vaccination date: {e}")
+
+        # Prepare data for Pet_Info update
+        pet_type = pet_data.get('type')
+        new_type = ','.join(pet_type) if isinstance(pet_type, list) else pet_type
+        gender = pet_data.get('gender')
+        new_gender = gender[0] if isinstance(gender, list) and gender else gender
+
+        # Update Pet_Info collection
+        pet_info_update = {
+            "name": pet_data.get('name'),
+            "type": new_type,
+            "breed": pet_data.get('breed'),
+            "gender": new_gender,
+            "age_month": pet_data.get('age_month'),
+            "description": pet_data.get('description')
+        }
+        pet_info_collection.update_one(
+            {"pet_id": pet_id},
+            {"$set": pet_info_update}
+        )
+
+        # Prepare data for Pet_Condition update
+        condition_update_data = {
+            "weight": pet_data.get('weight'),
+            "health_condition": pet_data.get('health_condition'),
+            "sterilisation_status": pet_data.get('sterilisation_status'),
+            "adoption_fee": pet_data.get('adoption_fee'),
+            "previous_owner": pet_data.get('previous_owner')
+        }
+
+        # Add vaccination_date to update if it was parsed successfully
+        if formatted_vaccination_date:
+            condition_update_data["vaccination_date"] = formatted_vaccination_date
+
+        # Update Pet_Condition collection
+        pet_condition_collection.update_one(
+            {"pet_condition_id": pet_condition_id},
+            {"$set": condition_update_data}
+        )
+
+        return jsonify({"message": "Pet updated successfully"}), 200
+
+    except Exception as e:
+        print(f"Error in admin_edit_pet: {str(e)}")
         return jsonify({"error": str(e)}), 500
