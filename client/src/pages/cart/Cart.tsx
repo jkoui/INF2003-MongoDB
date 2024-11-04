@@ -7,10 +7,11 @@ export default function Cart(): JSX.Element {
   const [cart, setCart] = useState<any>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const [togglePetConditions, setTogglePetConditions] = useState<any>({
-    toggle: false,
-    data: {},
-  });
+
+  function setTogglePetConditions(conditions: any) {
+    // Implement the logic for toggling pet conditions if needed
+    console.log("Toggle pet conditions:", conditions);
+  }
 
   async function getCart() {
     const user: any = sessionStorage.getItem("user");
@@ -63,53 +64,6 @@ export default function Cart(): JSX.Element {
     <div className="h-screen w-screen">
       <NavBar />
       <section className="w-screen h-screen flex justify-center items-center text-gray-700">
-        {togglePetConditions.toggle && (
-          <section className="w-screen h-screen fixed flex justify-center items-center backdrop-blur-sm z-50">
-            <div className="h-5/6 shadow-2xl rounded-lg bg-white">
-              <div className="h-3/6 border-b-2">
-                <img
-                  className="w-full h-full object-contain"
-                  src={togglePetConditions.data.image}
-                  alt={togglePetConditions.data.name}
-                />
-              </div>
-              <div className="flex flex-col h-3/6 justify-evenly p-4 tracking-wide overflow-y-auto overflow-x-hidden break-words">
-                <button
-                  className="bg-blue-500 text-white px-4 py-2 rounded-lg transition ease-in-out hover:scale-110 hover:bg-indigo-500 duration-300"
-                  onClick={() =>
-                    setTogglePetConditions({ toggle: false, data: {} })
-                  }
-                >
-                  Back
-                </button>
-                <div className="flex flex-row mb-2">
-                  <p className="font-bold mr-1">Weight: </p>
-                  {togglePetConditions.data.weight}
-                </div>
-                <div className="flex flex-row mb-2">
-                  <p className="font-bold mr-1">Vaccination Date: </p>
-                  {togglePetConditions.data.vaccination_date}
-                </div>
-                <div className="flex flex-row mb-2">
-                  <p className="font-bold mr-1">Health Condition: </p>
-                  {togglePetConditions.data.health_condition}
-                </div>
-                <div className="flex flex-row mb-2">
-                  <p className="font-bold mr-1">Sterilisation Status: </p>
-                  {togglePetConditions.data.sterilisation_status}
-                </div>
-                <div className="flex flex-row mb-2">
-                  <p className="font-bold mr-1">Adoption Fee: </p>
-                  {togglePetConditions.data.adoption_fee}
-                </div>
-                <div className="flex flex-row mb-2">
-                  <p className="font-bold mr-1">Previous Owner: </p>
-                  {togglePetConditions.data.previous_owner}
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
         <div className="w-11/12 border-2 h-4/5 bg-white rounded-lg flex flex-col items-center p-4">
           <div className="flex flex-row w-full items-center justify-center relative">
             <h1 className="font-bold text-2xl border-b-4 border-gray-700 text-center">

@@ -10,12 +10,9 @@ export default function PetCard({
   const [isReserved, setIsReserved] = useState<boolean>(false);
 
   useEffect(() => {
-    const isAlreadyFavourite =
-      favouritedPets && favouritedPets.length > 0
-        ? favouritedPets.some(
-            (favPet: any) => favPet.pet_id === petDetails.pet_id
-          )
-        : false;
+    const isAlreadyFavourite = favouritedPets.some(
+      (favPet: any) => favPet.pet_id === petDetails.pet_id
+    );
     setIsFavourite(isAlreadyFavourite);
   }, [favouritedPets, petDetails]);
 
@@ -24,7 +21,7 @@ export default function PetCard({
       (reservedPet: any) => reservedPet.pet_id === petDetails.pet_id
     );
     setIsReserved(isPetReserved);
-  }, [reservedPets, petDetails.pet_id]);
+  }, [reservedPets, petDetails]);
 
   const handleAddToFavourites = async () => {
     const userSession: any = sessionStorage.getItem("user");
@@ -35,19 +32,16 @@ export default function PetCard({
     }
 
     try {
-      const response = await fetch(
-        "http://127.0.0.1:5000/api/v1/addFavourite",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            pet_id: petDetails.pet_id,
-            user_id: user.user_id,
-          }),
-        }
-      );
+      const response = await fetch("http://127.0.0.1:5000/api/v1/addFavourite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pet_id: petDetails.pet_id,
+          user_id: user.user_id,
+        }),
+      });
 
       if (response.status === 201) {
         setIsFavourite(true);
@@ -113,11 +107,10 @@ export default function PetCard({
           <p className="font-bold mr-1">Gender: </p> {petDetails.gender}
         </div>
         <div className="flex flex-row mb-2">
-          <p className="font-bold mr-1">Age: </p> {petDetails.age_month} month
+          <p className="font-bold mr-1">Age: </p> {petDetails.age_month} months
         </div>
         <div className="flex flex-row mb-2">
-          <p className="font-bold mr-1">Adoption Status: </p>{" "}
-          {petDetails.adoption_status}
+          <p className="font-bold mr-1">Adoption Status: </p> {petDetails.adoption_status}
         </div>
         <p>{petDetails.description}</p>
       </div>
@@ -130,19 +123,18 @@ export default function PetCard({
               toggle: true,
               data: {
                 ...petDetails,
-                condition_info: petDetails.condition_info, // Pass condition_info if available
+                condition_info: petDetails.condition_info || {}, // Fallback for condition_info
               },
             });
           }}
         >
           View Pet Conditions
         </button>
+        
         <button
           className={`bg-blue-500 text-white px-4 py-2 rounded-lg transition ease-in-out hover:scale-110 hover:bg-indigo-500 duration-300 ${
-            isReserved
+            isReserved || petDetails.adoption_status === "Unavailable"
               ? "opacity-50 cursor-not-allowed"
-              : petDetails.adoption_status === "Unavailable"
-              ? "opacity-75 cursor-not-allowed"
               : ""
           }`}
           onClick={() => {
@@ -150,23 +142,19 @@ export default function PetCard({
               reservePet();
             }
           }}
-          disabled={isReserved}
+          disabled={isReserved || petDetails.adoption_status === "Unavailable"}
         >
-          {isReserved
-            ? "Unavailable for Adoption!"
-            : petDetails.adoption_status === "Unavailable"
-            ? "Unavailable for Adoption!"
+          {isReserved || petDetails.adoption_status === "Unavailable"
+            ? "Unavailable for Adoption"
             : "Reserve Pet"}
         </button>
 
         <button
-          className={`${
-            isFavourite ? "bg-gray-500" : "bg-red-500"
-          } text-white px-4 py-2 rounded-lg transition ease-in-out hover:scale-110 hover:bg-indigo-500 duration-300`}
+          className={`${isFavourite ? "bg-gray-500" : "bg-red-500"} text-white px-4 py-2 rounded-lg transition ease-in-out hover:scale-110 hover:bg-indigo-500 duration-300`}
           onClick={() => handleAddToFavourites()}
           disabled={isFavourite}
         >
-          {isFavourite ? "Added to Favourite" : "Add to Favourite"}
+          {isFavourite ? "Added to Favourites" : "Add to Favourites"}
         </button>
       </div>
     </article>
