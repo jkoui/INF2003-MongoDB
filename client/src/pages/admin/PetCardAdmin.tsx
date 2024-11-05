@@ -76,7 +76,13 @@ export default function PetCardAdmin({
           <button
             className="bg-blue-500 text-white px-4 py-2 rounded-lg transition ease-in-out hover:scale-110 hover:bg-indigo-500 duration-300"
             onClick={() => {
-              setTogglePetConditions({ toggle: true, data: petDetails });
+              setTogglePetConditions({
+              toggle: true,
+              data: {
+                ...petDetails,
+                condition_info: petDetails.condition_info || {}, // Fallback for condition_info
+              },
+            });
             }}
           >
             View Pet Conditions
@@ -84,7 +90,13 @@ export default function PetCardAdmin({
           <button
             className="bg-blue-500 text-white px-4 py-2 rounded-lg transition ease-in-out hover:scale-110 hover:bg-indigo-500 duration-300"
             onClick={() => {
-              setEditPetToggle({ toggle: true, data: petDetails })
+              setEditPetToggle({
+                toggle: true,
+                data: {
+                  ...petDetails,
+                  ...petDetails.condition_info, // Include condition info in edit modal
+                }
+              });
             }}
           >
             Edit Pet

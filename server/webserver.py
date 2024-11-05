@@ -378,6 +378,16 @@ def get_cart():
             "as": "pets_info.pet_condition"
         }},
         {"$unwind": "$pets_info.pet_condition"},  # Flatten pet_condition array
+        {"$lookup": {
+            "from": "Condition_Info",
+            "localField": "pets_info.pet_condition.condition_info_id",
+            "foreignField": "condition_info_id",
+            "as": "pets_info.pet_condition.condition_info"
+        }},
+        {"$unwind": {
+            "path": "$pets_info.pet_condition.condition_info",
+            "preserveNullAndEmptyArrays": True
+        }},  # Flatten pet_condition array
         {"$project": {
             "cart_id": 1,
             "user_id": 1,
@@ -535,7 +545,7 @@ def admin_login():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# half working (no pet conditions)
+# working
 @app.route('/api/v1/admin/editPet', methods=['POST'])
 def admin_edit_pet():
     data = request.json
@@ -566,6 +576,8 @@ def admin_edit_pet():
             return jsonify({"error": "Pet not found"}), 404
 
         pet_condition_id = pet_info.get("pet_condition_id")
+        if not pet_condition_id:
+            return jsonify({"error": "Pet condition not linked"}), 404
 
         # Parse vaccination_date if present
         vaccination_date_str = pet_data.get('vaccination_date')
@@ -588,7 +600,7 @@ def admin_edit_pet():
             "type": new_type,
             "breed": pet_data.get('breed'),
             "gender": new_gender,
-            "age_month": pet_data.get('age_month'),
+            "age_month": int(pet_data.get('age_month')),
             "description": pet_data.get('description')
         }
         pet_info_collection.update_one(
@@ -598,11 +610,11 @@ def admin_edit_pet():
 
         # Prepare data for Pet_Condition update
         condition_update_data = {
-            "weight": pet_data.get('weight'),
+            "weight": int(pet_data.get('weight')) if pet_data.get('weight') else 0,
             "health_condition": pet_data.get('health_condition'),
-            "sterilisation_status": pet_data.get('sterilisation_status'),
-            "adoption_fee": pet_data.get('adoption_fee'),
-            "previous_owner": pet_data.get('previous_owner')
+            "sterilisation_status": int(pet_data.get('sterilisation_status')) if pet_data.get('sterilisation_status') else 0,
+            "adoption_fee": int(pet_data.get('adoption_fee')) if pet_data.get('adoption_fee') else 0,
+            "previous_owner": int(pet_data.get('previous_owner')) if pet_data.get('previous_owner') else 0
         }
 
         # Add vaccination_date to update if it was parsed successfully
@@ -619,4 +631,78 @@ def admin_edit_pet():
 
     except Exception as e:
         print(f"Error in admin_edit_pet: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# WORKING
+@app.route('/api/v1/admin/addPet', methods=['POST'])
+def admin_add_pet():
+    data = request.json
+    pet_data = data.get('pet_data')
+    user_id = data.get('user_id')
+
+    if not pet_data or not user_id:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+        pet_condition_collection = db['Pet_Condition']
+        pet_info_collection = db['Pets_Info']
+
+        # Check if the user has admin permissions
+        user = users_collection.find_one({"user_id": user_id})
+        if not user or user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 400
+
+        # Find the maximum pet_id in Pets_Info and increment by 1
+        last_pet = pet_info_collection.find_one(sort=[("pet_id", -1)])
+        next_pet_id = (last_pet['pet_id'] + 1) if last_pet else 1
+
+        # Find the maximum pet_condition_id in Pet_Condition and increment by 1
+        last_condition = pet_condition_collection.find_one(sort=[("pet_condition_id", -1)])
+        next_pet_condition_id = (last_condition['pet_condition_id'] + 1) if last_condition else 1
+
+        # Parse the vaccination_date in the expected format
+        vaccination_date_str = pet_data.get('vaccination_date')
+        formatted_vaccination_date = None
+        if vaccination_date_str:
+            try:
+                formatted_vaccination_date = datetime.fromisoformat(vaccination_date_str.replace("Z", "+00:00"))
+            except ValueError as e:
+                print(f"Error parsing vaccination date: {e}")
+                return jsonify({"error": "Invalid vaccination date format."}), 400
+
+        # Insert data into Pet_Condition collection with the incremented pet_condition_id
+        pet_condition_data = {
+            "pet_condition_id": next_pet_condition_id,
+            "weight": int(pet_data.get('weight')),
+            "vaccination_date": formatted_vaccination_date,
+            "health_condition": pet_data.get('health_condition'),
+            "sterilisation_status": int(pet_data.get('sterilisation_status')),
+            "adoption_fee": int(pet_data.get('adoption_fee')),
+            "previous_owner": int(pet_data.get('previous_owner'))
+        }
+        pet_condition_result = pet_condition_collection.insert_one(pet_condition_data)
+
+        # Insert data into Pet_Info collection with the incremented pet_id
+        pet_info_data = {
+            "pet_id": next_pet_id,
+            "name": pet_data.get('name'),
+            "type": pet_data.get('type'),
+            "breed": pet_data.get('breed'),
+            "gender": pet_data.get('gender'),
+            "age_month": int(pet_data.get('age_month')),
+            "description": pet_data.get('description'),
+            "image": pet_data.get('image'),
+            "adoption_status": "Available",
+            "pet_condition_id": next_pet_condition_id
+        }
+        pet_info_collection.insert_one(pet_info_data)
+
+        return jsonify({"message": "Pet added successfully", "pet_id": next_pet_id}), 200
+
+    except Exception as e:
         return jsonify({"error": str(e)}), 500

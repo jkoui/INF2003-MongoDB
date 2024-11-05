@@ -48,12 +48,17 @@ export default function AdminManagePetsPage() {
 
   const handleInputChangeAdd = (e: any) => {
     const { name, value } = e.target;
-    setToggleAddPet((prev: any) => ({
-      ...prev,
-      data: { ...prev.data, [name]: value },
+    let formattedValue = value;
+  
+    if (name === "vaccination_date") {
+      const date = new Date(value);
+      formattedValue = date.toISOString().slice(0, 16);  // Converts to "YYYY-MM-DDTHH:mm:ss.sssZ"
+    }
+  
+    setToggleAddPet((prevState: any) => ({
+      ...prevState,
+      data: { ...prevState.data, [name]: formattedValue },
     }));
-
-    console.log(toggleAddPet.data)
   };
 
 
@@ -133,7 +138,7 @@ export default function AdminManagePetsPage() {
       toggle: false
     }))
   }
-
+  
   useEffect(() => {
     const user: any = sessionStorage.getItem("user");
 
@@ -173,27 +178,27 @@ export default function AdminManagePetsPage() {
               </button>
               <div className="flex flex-row mb-2">
                 <p className="font-bold mr-1">Weight: </p>
-                {togglePetConditions.data.weight}
+                {togglePetConditions.data.condition_info.weight}
               </div>
               <div className="flex flex-row mb-2">
                 <p className="font-bold mr-1">Vaccination Date: </p>
-                {togglePetConditions.data.vaccination_date}
+                {togglePetConditions.data.condition_info.vaccination_date}
               </div>
               <div className="flex flex-row mb-2">
                 <p className="font-bold mr-1">Health Condition: </p>
-                {togglePetConditions.data.health_condition}
+                {togglePetConditions.data.condition_info.health_condition}
               </div>
               <div className="flex flex-row mb-2">
                 <p className="font-bold mr-1">Sterilisation Status: </p>
-                {togglePetConditions.data.sterilisation_status}
+                {togglePetConditions.data.condition_info.sterilisation_status}
               </div>
               <div className="flex flex-row mb-2">
                 <p className="font-bold mr-1">Adoption Fee: </p>
-                {togglePetConditions.data.adoption_fee}
+                {togglePetConditions.data.condition_info.adoption_fee}
               </div>
               <div className="flex flex-row mb-2">
                 <p className="font-bold mr-1">Previous Owner: </p>
-                {togglePetConditions.data.previous_owner}
+                {togglePetConditions.data.condition_info.previous_owner}
               </div>
             </div>
           </div>
@@ -272,7 +277,7 @@ export default function AdminManagePetsPage() {
                   </div>
                   <div className="flex flex-row mb-2">
                     <p className="font-bold mr-1">{"Vaccination Date (dd/mm/yyyy):"} </p>
-                    <input className="border-2 rounded-lg pl-2 pr-2 border-black tracking-wide" name="vaccination_date" value={toggleAddPet.data.vaccination_date} onChange={(e: any) => {handleInputChangeAdd(e)}}/>
+                    <input type="datetime-local" className="border-2 rounded-lg pl-2 pr-2 border-black tracking-wide" name="vaccination_date" value={toggleAddPet.data.vaccination_date} onChange={(e: any) => {handleInputChangeAdd(e)}}/>
                   </div>
                   <div className="flex flex-row mb-2">
                     <p className="font-bold mr-1">Health Condition: </p>
