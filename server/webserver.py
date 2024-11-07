@@ -813,3 +813,422 @@ def admin_add_user():
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/v1/admin/getUser/<int:user_id>', methods=['POST'])
+def admin_get_user(user_id):
+    data = request.json
+    admin_id = data.get('admin_id')
+
+    if not admin_id:
+        return jsonify({"error": "Admin ID is required"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": admin_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Fetch the user details
+        user = users_collection.find_one({"user_id": user_id}, {"_id": 0, "user_id": 1, "username": 1, "role": 1})
+
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        return jsonify({
+            "status": "success",
+            "user": user
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
+# WORKING
+@app.route('/api/v1/admin/updateUser/<int:user_id>', methods=['POST'])
+def admin_update_user(user_id):
+    data = request.json
+    admin_id = data.get('admin_id')
+    username = data.get('username')
+    role = data.get('role')
+
+    # Ensure all required fields are provided
+    if not all([admin_id, username, role]):
+        return jsonify({"error": "All fields are required"}), 400
+
+    # Connect to the database
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": admin_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Retrieve the user being updated to check the current role
+        user = users_collection.find_one({"user_id": user_id})
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        # Check if the update involves changing the role from "user" to "admin"
+        current_role = user.get("role")
+        if current_role == "adopter" and role == "admin":
+            # Log or notify about the privilege escalation for audit purposes (optional)
+            print(f"Escalating privileges for user_id {user_id} from 'adopter' to 'admin'.")
+
+        # Update the user information, including the role
+        result = users_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"username": username, "role": role}}
+        )
+
+        # Check if any document was modified
+        if result.matched_count == 0:
+            return jsonify({"error": "User not found or no changes made"}), 404
+
+        return jsonify({
+            "status": "success",
+            "message": f"User updated successfully to role: {role}"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+from bson import ObjectId
+
+@app.route('/api/v1/admin/getApplications', methods=['POST'])
+def admin_get_applications():
+    data = request.json
+    admin_id = data.get('admin_id')
+
+    if not admin_id:
+        return jsonify({"error": "Admin ID is required"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+        applications_collection = db['Applications']
+        pets_info_collection = db['Pets_Info']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": admin_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Aggregate data from Applications, Users, and Pets_Info collections
+        applications = list(applications_collection.aggregate([
+            {
+                "$lookup": {
+                    "from": "Users",
+                    "localField": "user_id",
+                    "foreignField": "user_id",
+                    "as": "user_info"
+                }
+            },
+            {
+                "$lookup": {
+                    "from": "Pets_Info",
+                    "localField": "pet_id",
+                    "foreignField": "pet_id",
+                    "as": "pet_info"
+                }
+            },
+            # Unwind user_info and pet_info arrays
+            {"$unwind": "$user_info"},
+            {"$unwind": "$pet_info"},
+            # Project only the needed fields
+            {
+                "$project": {
+                    "application_id": 1,
+                    "user_id": 1,
+                    "pet_id": 1,
+                    "submission_date": 1,
+                    "status": 1,
+                    "username": "$user_info.username",
+                    "pet_name": "$pet_info.name"
+                }
+            }
+        ]))
+
+        # Convert ObjectId fields to strings
+        for application in applications:
+            application['_id'] = str(application['_id'])
+
+        return jsonify({
+            "status": "success",
+            "applications": applications
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/v1/admin/getApplications/<int:application_id>', methods=['POST'])
+def admin_get_application_detail(application_id):
+    data = request.json
+    user_id = data.get('user_id')
+
+    if not user_id:
+        return jsonify({"error": "User ID is required"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+        applications_collection = db['Applications']
+        pets_info_collection = db['Pets_Info']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": user_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Aggregate data from Applications, Users, and Pets_Info collections
+        application_detail = list(applications_collection.aggregate([
+            {"$match": {"application_id": application_id}},  # Match specific application ID
+            {"$lookup": {
+                "from": "Users",
+                "localField": "user_id",
+                "foreignField": "user_id",
+                "as": "user_info"
+            }},
+            {"$lookup": {
+                "from": "Pets_Info",
+                "localField": "pet_id",
+                "foreignField": "pet_id",
+                "as": "pet_info"
+            }},
+            {"$unwind": "$user_info"},
+            {"$unwind": "$pet_info"},
+            {"$project": {
+                "application_id": 1,
+                "submission_date": 1,
+                "status": 1,
+                "pet_id": "$pet_info.pet_id",
+                "pet_name": "$pet_info.name",
+                "pet_type": "$pet_info.type",
+                "breed": "$pet_info.breed",
+                "gender": "$pet_info.gender",
+                "age_month": "$pet_info.age_month",
+                "pet_description": "$pet_info.description",
+                "pet_image": "$pet_info.image",
+                "applicant_id": "$user_info.user_id",
+                "applicant_username": "$user_info.username"
+            }}
+        ]))
+
+        # Handle case if no application is found
+        if not application_detail:
+            return jsonify({
+                "status": "error",
+                "message": "Application not found"
+            }), 404
+        
+        # Convert MongoDB's date to ISO format
+        application = application_detail[0]
+        if 'submission_date' in application and isinstance(application['submission_date'], datetime):
+            application['submission_date'] = application['submission_date'].isoformat()
+
+        for key, value in application.items():
+            if isinstance(value, ObjectId):
+                application[key] = str(value)
+        
+        return jsonify({
+            "status": "success",
+            "application": application
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/v1/admin/updateApplicationStatus/<int:application_id>', methods=['POST'])
+def update_application_status(application_id):
+    data = request.json
+    print(data)
+    new_status = data.get('status')
+    admin_id = data.get('user_id')  # Admin ID
+    applicant_id = data.get('applicant_id')  # Applicant's user ID
+    pet_id = data.get('pet_id')
+    print("Parsed admin_id:", admin_id)  # Check if this is parsed correctly
+    print("Parsed applicant_id:", applicant_id)  # Check if this is parsed correctly
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+        applications_collection = db['Applications']
+        adoptions_collection = db['Adoptions']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": admin_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Update the application status
+        update_result = applications_collection.update_one(
+            {"application_id": application_id},
+            {"$set": {"status": new_status}}
+        )
+
+        if update_result.matched_count == 0:
+            return jsonify({"error": "Application not found"}), 404
+
+        # If the status is approved, insert a new record into Adoptions
+        if new_status == 'approved':
+            # Find the current maximum adoption_id
+            last_adoption = adoptions_collection.find_one(sort=[("adoption_id", -1)])
+            next_adoption_id = last_adoption["adoption_id"] + 1 if last_adoption else 1
+
+            # Define the adoption date in the desired ISO format
+            today = datetime.now().isoformat()
+            # Insert a new record into Adoptions collection
+            adoption_data = {
+                "adoption_id": next_adoption_id,
+                "application_id": application_id,
+                "adoption_date": datetime.fromisoformat(today.replace("Z", "+00:00")),
+                "pet_id": pet_id,
+                "user_id": applicant_id  # Correct user ID
+                
+            }
+            adoptions_collection.insert_one(adoption_data)
+
+        return jsonify({
+            "status": "success",
+            "message": "Application status updated successfully"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
+@app.route('/api/v1/admin/getAdoptions', methods=['POST'])
+def admin_get_adoptions():
+    data = request.json
+    user_id = data.get('user_id')
+
+    if not user_id:
+        return jsonify({"error": "User ID is required"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+        adoptions_collection = db['Adoptions']
+        pets_info_collection = db['Pets_Info']
+        applications_collection = db['Applications']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": user_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Aggregate data from Adoptions, Users, Pets_Info, and Applications collections
+        adoptions = list(adoptions_collection.aggregate([
+            # Lookup adopter details from Users collection
+            {
+                "$lookup": {
+                    "from": "Users",
+                    "localField": "user_id",
+                    "foreignField": "user_id",
+                    "as": "adopter_info"
+                }
+            },
+            {"$unwind": "$adopter_info"},  # Unwind the result to flatten the array
+
+            # Lookup pet details from Pets_Info collection
+            {
+                "$lookup": {
+                    "from": "Pets_Info",
+                    "localField": "pet_id",
+                    "foreignField": "pet_id",
+                    "as": "pet_info"
+                }
+            },
+            {"$unwind": "$pet_info"},  # Unwind the result to flatten the array
+
+            # Lookup application details from Applications collection
+            {
+                "$lookup": {
+                    "from": "Applications",
+                    "localField": "application_id",
+                    "foreignField": "application_id",
+                    "as": "application_info"
+                }
+            },
+            {"$unwind": "$application_info"},  # Unwind the result to flatten the array
+
+            # Project only the fields needed for the response
+            {
+                "$project": {
+                    "adoption_id": 1,
+                    "adoption_date": 1,
+                    "adopter_id": "$adopter_info.user_id",
+                    "adopter_name": "$adopter_info.username",
+                    "pet_id": "$pet_info.pet_id",
+                    "pet_name": "$pet_info.name",
+                    "pet_type": "$pet_info.type",
+                    "pet_breed": "$pet_info.breed",
+                    "application_id": "$application_info.application_id",
+                    "application_date": "$application_info.submission_date",
+                    "application_status": "$application_info.status"
+                }
+            },
+            # Sort by adoption_date in descending order
+            {"$sort": {"adoption_date": -1}}
+        ]))
+
+        # Convert ObjectId fields and datetime to strings for JSON serialization
+        for adoption in adoptions:
+            for key, value in adoption.items():
+                if isinstance(value, ObjectId):
+                    adoption[key] = str(value)
+                elif isinstance(value, datetime):
+                    adoption[key] = value.isoformat()
+
+        return jsonify({
+            "status": "success",
+            "adoptions": adoptions
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
+
+if __name__ == '__main__':
+    app.run(debug=True)

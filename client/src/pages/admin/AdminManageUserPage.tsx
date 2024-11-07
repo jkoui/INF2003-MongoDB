@@ -49,38 +49,50 @@ function AdminManageUserPage() {
     };
 
     const handleUpdateUser = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        setUpdateMessage(null);
+    e.preventDefault();
+    setError(null);
+    setUpdateMessage(null);
 
-        if (!user) return;
+    if (!user) return;
 
-        try {
-            const adminUser = JSON.parse(sessionStorage.getItem('user') || '{}');
-            const response = await fetch(`http://127.0.0.1:5000/api/v1/admin/updateUser/${user_id}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    admin_id: adminUser.user_id,
-                    username: user.username,
-                    role: user.role,
-                }),
-            });
+    try {
+        const adminUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+        console.log("Admin user:", adminUser); // Debugging line
 
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to update user');
-            }
-
-            setUpdateMessage('User updated successfully');
-        } catch (err) {
-            setError('Error updating user');
-            console.error('Error:', err);
+        // Check if adminUser contains a valid user_id
+        if (!adminUser.user_id) {
+            throw new Error("Admin user ID not found in session storage");
         }
-    };
+
+        const response = await fetch(`http://127.0.0.1:5000/api/v1/admin/updateUser/${user_id}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                admin_id: adminUser.user_id,
+                username: user.username,
+                role: user.role,
+            }),
+        });
+
+        // Check if response is not ok
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Error status: ${response.status}, Error text: ${errorText}`); // Detailed error log
+            throw new Error(errorText || 'Failed to update user');
+        }
+
+        const data = await response.json();
+        console.log("Response data:", data); // Debugging line
+
+        setUpdateMessage('User updated successfully');
+    } catch (err) {
+        console.error('Error in handleUpdateUser:', err); // More specific error message
+        setError('Error updating user: ' + (err.message || 'Unknown error'));
+    }
+};
+
 
     const handleDeleteUser = async () => {
         if (window.confirm('Are you sure you want to delete this user?')) {
