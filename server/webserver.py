@@ -706,3 +706,110 @@ def admin_add_pet():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/admin/getUsers', methods=['POST'])
+def admin_get_users():
+    data = request.json
+    user_id = data.get('user_id')
+
+    if not user_id:
+        return jsonify({"error": "User ID is required"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+
+        # Check if the user has admin permissions
+        user = users_collection.find_one({"user_id": user_id})
+        if not user or user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Query all users and return specific fields
+        users = list(users_collection.find({}, {"user_id": 1, "username": 1, "role": 1, "_id": 0}))
+
+        return jsonify({
+            "status": "success",
+            "users": users
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/v1/admin/deleteUser/<int:user_id>', methods=['POST'])
+def admin_delete_user(user_id):
+    data = request.json
+    admin_id = data.get('admin_id')
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": admin_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Delete the user
+        result = users_collection.delete_one({"user_id": user_id})
+
+        if result.deleted_count == 0:
+            return jsonify({"error": "User not found"}), 404
+
+        return jsonify({"message": "User deleted successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+from werkzeug.security import generate_password_hash
+
+@app.route('/api/v1/admin/addUser', methods=['POST'])
+def admin_add_user():
+    data = request.json
+    admin_id = data.get('admin_id')
+    username = data.get('username')
+    password = data.get('password')
+    role = data.get('role')
+
+    if not all([admin_id, username, password, role]):
+        return jsonify({"error": "All fields are required"}), 400
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        users_collection = db['Users']
+
+        # Check if the requesting user has admin permissions
+        admin_user = users_collection.find_one({"user_id": admin_id})
+        if not admin_user or admin_user.get("role") != "admin":
+            return jsonify({"error": "Invalid Permissions"}), 403
+
+        # Generate a hashed password
+        hashed_password = generate_password_hash(password)
+
+        # Find the current maximum user_id and increment it
+        last_user = users_collection.find_one(sort=[("user_id", -1)])
+        next_user_id = last_user['user_id'] + 1 if last_user else 1
+
+        # Insert the new user
+        new_user = {
+            "user_id": next_user_id,
+            "username": username,
+            "password": hashed_password,
+            "role": role
+        }
+        users_collection.insert_one(new_user)
+
+        return jsonify({"status": "success", "message": "User added successfully"}), 201
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
