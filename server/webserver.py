@@ -1142,8 +1142,6 @@ def update_application_status(application_id):
     admin_id = data.get('user_id')  # Admin ID
     applicant_id = data.get('applicant_id')  # Applicant's user ID
     pet_id = data.get('pet_id')
-    print("Parsed admin_id:", admin_id)  # Check if this is parsed correctly
-    print("Parsed applicant_id:", applicant_id)  # Check if this is parsed correctly
 
     db = get_db_connection()
     if db is None:
@@ -1153,6 +1151,7 @@ def update_application_status(application_id):
         users_collection = db['Users']
         applications_collection = db['Applications']
         adoptions_collection = db['Adoptions']
+        pets_info_collection = db['Pets_Info']
 
         # Check if the requesting user has admin permissions
         admin_user = users_collection.find_one({"user_id": admin_id})
@@ -1170,6 +1169,12 @@ def update_application_status(application_id):
 
         # If the status is approved, insert a new record into Adoptions
         if new_status == 'approved':
+            # Update pet's adoption_status to "Unavailable"
+            pets_info_collection.update_one(
+                {"pet_id": pet_id},
+                {"$set": {"adoption_status": "Unavailable"}}
+            )
+            
             # Find the current maximum adoption_id
             last_adoption = adoptions_collection.find_one(sort=[("adoption_id", -1)])
             next_adoption_id = last_adoption["adoption_id"] + 1 if last_adoption else 1
