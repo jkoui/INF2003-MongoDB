@@ -176,6 +176,74 @@ def get_top3():
         return jsonify({"error": str(e)}), 500
 
 # WORKING
+@app.route('/api/v1/filterpets', methods=['POST'])
+def filter_pets():
+    data = request.json
+
+    # Extract search filters
+    filter_type = data.get('type')
+    filter_value = data.get('value')
+    gender = data.get('gender')
+    health_condition = data.get('health_condition')
+    sterilisation_status = data.get('sterilisation_status')
+
+    # Initialize the base match conditions
+    match_conditions = {}
+
+    # Only add filters if values are provided
+    if filter_type and filter_value:
+        match_conditions[filter_type] = {"$regex": filter_value, "$options": "i"}  # Case-insensitive search
+
+    if gender:
+        match_conditions["gender"] = gender
+
+    if health_condition:
+        match_conditions["condition_info.health_condition"] = health_condition
+
+    if sterilisation_status in ["0", "1"]:
+        match_conditions["condition_info.sterilisation_status"] = int(sterilisation_status)
+
+    print("Applied Filters:", match_conditions)  # Debug log for applied filters
+
+    db = get_db_connection()
+    if db is None:
+        return jsonify({"error": "Database connection failed"}), 500
+
+    try:
+        pets_info_collection = db['Pets_Info']
+
+        # Aggregation pipeline with match conditions
+        pipeline = [
+            {"$lookup": {
+                "from": "Pet_Condition",
+                "localField": "pet_condition_id",
+                "foreignField": "pet_condition_id",
+                "as": "condition_info"
+            }},
+            {"$unwind": "$condition_info"},
+            {"$match": match_conditions}
+        ]
+
+        # Fetch filtered pets
+        pets = list(pets_info_collection.aggregate(pipeline))
+
+        # Convert ObjectId fields to strings
+        for pet in pets:
+            for key, value in pet.items():
+                if isinstance(value, ObjectId):
+                    pet[key] = str(value)
+            if "condition_info" in pet:
+                for key, value in pet["condition_info"].items():
+                    if isinstance(value, ObjectId):
+                        pet["condition_info"][key] = str(value)
+
+        return jsonify(pets), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# WORKING
 @app.route('/api/v1/addFavourite', methods=['POST'])
 def add_favourite():
     data = request.json
