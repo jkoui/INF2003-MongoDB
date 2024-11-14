@@ -41,15 +41,7 @@ async def create_indexes(db):
     
     print("Indexes created successfully")
 
-# concurrency in the case where 2 users register at the same time
-async def get_next_user_id(db):
-    counter = await db["counter"].find_one_and_update(
-        {"_id": "user_id"},
-        {"$inc": {"sequence_value": 1}},  #increment the sequence value by 1
-        upsert=True,
-        return_document=True
-    )
-    return counter["sequence_value"]   
+    
 
 @app.route('/api/v1')
 def index():
@@ -77,7 +69,9 @@ async def register():
     user_collection = db['Users']
     
     try:
-        next_user_id = await get_next_user_id(db)
+        # Find the current maximum user_id
+        last_user = await user_collection.find_one(sort=[("user_id", -1)])
+        next_user_id = last_user['user_id'] + 1 if last_user else 1
 
         # Insert the new user
         await user_collection.insert_one({
