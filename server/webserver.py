@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
 import os
-from motor.motor_asyncio import AsyncIOMotorClient
-
 
 load_dotenv()
 
@@ -16,32 +14,15 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
 app.secret_key = "inf2002dbprojectpartone"
 
-async def get_db_connection():
+def get_db_connection():
     try:
-        client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
+        client = MongoClient(os.getenv("MONGO_URI"))
         client.admin.command('ping')
         db = client[os.getenv("DATABASE_NAME")]
-        print("MongoDB connection successful!")
         return db
     except Exception as e:
         print(f"Error connecting to the database: {e}")
         return None
-
-async def create_indexes(db):
-    # Users Collection - Index username and user_id for fast lookups
-    await db['Users'].create_index([('user_id', 1)], unique=True)
-    await db['Users'].create_index([('username', 1)], unique=True)
-    
-    # Pets_Info Collection - Index pet_id for quick access and type for filtering
-    await db['Pets_Info'].create_index([('pet_id', 1)], unique=True)
-    await db['Pets_Info'].create_index([('type', 1)])  # Index on 'type' for filtering pets by type
-    
-    # Favourites Collection - Compound index on user_id and pet_id to avoid duplicates
-    await db['Favourites'].create_index([('user_id', 1), ('pet_id', 1)], unique=True)
-    
-    print("Indexes created successfully")
-
-    
 
 @app.route('/api/v1')
 def index():
@@ -53,7 +34,7 @@ def index():
 """
 
 @app.route('/api/v1/register', methods=['POST'])
-async def register():
+def register():
     data = request.json
     username = data.get('username')
     password = data.get('password')
@@ -62,7 +43,7 @@ async def register():
         return jsonify({"error": "Missing required fields"}), 400
 
     hashed_password = generate_password_hash(password)
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -70,11 +51,11 @@ async def register():
     
     try:
         # Find the current maximum user_id
-        last_user = await user_collection.find_one(sort=[("user_id", -1)])
+        last_user = user_collection.find_one(sort=[("user_id", -1)])
+        # If there is no user, start from 1; otherwise, increment from the maximum
         next_user_id = last_user['user_id'] + 1 if last_user else 1
-
-        # Insert the new user
-        await user_collection.insert_one({
+        # Insert the new user with the next user_id
+        user_collection.insert_one({
             "user_id": next_user_id,
             "username": username,
             "password": hashed_password,
@@ -84,12 +65,12 @@ async def register():
 
     except DuplicateKeyError:
         return jsonify({"error": "Username already exists"}), 400
-
+    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/login', methods=['POST'])
-async def login():
+def login():
     data = request.json
     username = data.get('username')
     password = data.get('password')
@@ -97,12 +78,12 @@ async def login():
     if not username or not password:
         return jsonify({"error": "Missing username or password"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
     user_collection = db['Users']
-    user = await user_collection.find_one({"username": username})
+    user = user_collection.find_one({"username": username})
 
     if user and check_password_hash(user['password'], password):
         return jsonify({
@@ -119,42 +100,46 @@ async def login():
 
 # WORKING
 @app.route('/api/v1/getPets', methods=['GET'])
-@app.route('/api/v1/getPets', methods=['GET'])
-async def get_all_pets():
-    db = await get_db_connection()
+def get_all_pets():
+    db = get_db_connection()
+
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
-
     pet_info_collection = db['Pets_Info']
     pipeline = [
-        {"$lookup": {
-            "from": "Pet_Condition",
-            "localField": "pet_condition_id",
-            "foreignField": "pet_condition_id",
-            "as": "condition_info"
-        }},
-        {"$unwind": {"path": "$condition_info", "preserveNullAndEmptyArrays": True}}
+        {
+            "$lookup": {
+                "from": "Pet_Condition",
+                "localField": "pet_condition_id",
+                "foreignField": "pet_condition_id",
+                "as": "condition_info"
+            }
+        },
+        {
+            "$unwind": {
+                "path": "$condition_info",
+                "preserveNullAndEmptyArrays": True
+            }
+        }
     ]
-    
-    pets = await pet_info_collection.aggregate(pipeline).to_list(length=None)
+    pets = list(pet_info_collection.aggregate(pipeline))
+
     for pet in pets:
         pet['_id'] = str(pet['_id'])
         if pet.get('condition_info') and '_id' in pet['condition_info']:
             pet['condition_info']['_id'] = str(pet['condition_info']['_id'])
-
     return jsonify(pets), 200
-
 
 # WORKING
 @app.route('/api/v1/getTop3', methods=['GET'])
-async def get_top3():
-    db = await get_db_connection()  
+def get_top3():
+    db = get_db_connection()  
 
     if db is None:
         return jsonify([]), 500  
 
     try:
-        top3_pets = await db['Pets_Info'].aggregate([ 
+        top3_pets = list(db['Pets_Info'].aggregate([
             {
                 "$lookup": {
                     "from": "Favourites",   
@@ -179,8 +164,7 @@ async def get_top3():
                     "favourites": 0 
                 }
             }
-        ]).to_list(length=None)
-
+        ]))
 
         for pet in top3_pets:
             if '_id' in pet:
@@ -193,7 +177,7 @@ async def get_top3():
 
 # WORKING
 @app.route('/api/v1/filterpets', methods=['POST'])
-async def filter_pets():
+def filter_pets():
     data = request.json
 
     # Extract search filters
@@ -221,7 +205,7 @@ async def filter_pets():
 
     print("Applied Filters:", match_conditions)  # Debug log for applied filters
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -241,7 +225,7 @@ async def filter_pets():
         ]
 
         # Fetch filtered pets
-        pets = await pets_info_collection.aggregate(pipeline).to_list(length=None)
+        pets = list(pets_info_collection.aggregate(pipeline))
 
         # Convert ObjectId fields to strings
         for pet in pets:
@@ -261,7 +245,7 @@ async def filter_pets():
 
 # WORKING
 @app.route('/api/v1/addFavourite', methods=['POST'])
-async def add_favourite():
+def add_favourite():
     data = request.json
     pet_id = data.get('pet_id')
     user_id = data.get('user_id')
@@ -279,7 +263,7 @@ async def add_favourite():
     except ValueError:
         return jsonify({"error": "User ID must be an integer"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -287,17 +271,17 @@ async def add_favourite():
     
     try:
         # Check if the pet is already in the user's favourites
-        existing_favourite = await favourites_collection.find_one({"user_id": user_id, "pet_id": pet_id})
+        existing_favourite = favourites_collection.find_one({"user_id": user_id, "pet_id": pet_id})
         if existing_favourite:
             return jsonify({"error": "Pet is already in favourites"}), 400
 
         # Find the current maximum favourite_id
-        last_favourite = await favourites_collection.find_one(sort=[("favourite_id", -1)])
+        last_favourite = favourites_collection.find_one(sort=[("favourite_id", -1)])
         # If there are no favourites, start from 1; otherwise, increment from the maximum
         next_favourite_id = last_favourite['favourite_id'] + 1 if last_favourite else 1
 
         # Insert the new favourite document with integer user_id
-        await favourites_collection.insert_one({
+        favourites_collection.insert_one({
             "favourite_id": next_favourite_id,
             "user_id": user_id,  # This will be stored as an integer
             "pet_id": pet_id
@@ -311,8 +295,8 @@ async def add_favourite():
 
     
 @app.route('/api/v1/getReservedPets', methods=['GET'])
-async def get_reserved_pets():
-    db = await get_db_connection()
+def get_reserved_pets():
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -326,7 +310,7 @@ async def get_reserved_pets():
         {"$match": {"application_info": {"$ne": []}}}  # Only include pets with applications
     ]
 
-    pets_in_applications = await db["Pets_Info"].aggregate(pipeline).to_list(length=None)
+    pets_in_applications = list(db["Pets_Info"].aggregate(pipeline))
 
     # Convert ObjectIds to strings for JSON compatibility
     for pet in pets_in_applications:
@@ -337,7 +321,7 @@ async def get_reserved_pets():
 
 # WORKING
 @app.route('/api/v1/getFavourites', methods=['GET'])
-async def get_favourites():
+def get_favourites():
     user_id = request.args.get('user_id')
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
@@ -348,7 +332,7 @@ async def get_favourites():
     except ValueError:
         return jsonify({"error": "Invalid user_id format"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -378,8 +362,7 @@ async def get_favourites():
 
     try:
         # Run the aggregation pipeline
-        favourited_pets = await db["Favourites"].aggregate(pipeline).to_list(length=None)
-
+        favourited_pets = list(db["Favourites"].aggregate(pipeline))
 
         # Convert ObjectIds to strings for JSON compatibility
         for pet in favourited_pets:
@@ -396,7 +379,7 @@ async def get_favourites():
 
 # WORKING
 @app.route('/api/v1/addtocart', methods=['POST'])
-async def add_to_cart():
+def add_to_cart():
     data = request.json
     user_id = data.get('user_id')
     pet_id = data.get('pet_id')
@@ -404,7 +387,7 @@ async def add_to_cart():
     if not user_id:
         return jsonify({"error": "User not logged in"}), 401 
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -412,17 +395,17 @@ async def add_to_cart():
     
     try:
         # Check if the pet is already in the user's cart
-        existing_cart_item = await cart_collection.find_one({"user_id": user_id, "pet_id": pet_id})
+        existing_cart_item = cart_collection.find_one({"user_id": user_id, "pet_id": pet_id})
         if existing_cart_item:
             return jsonify({"error": "Pet is already in cart"}), 400
 
         # Find the current maximum cart_id
-        last_cart_item = await cart_collection.find_one(sort=[("cart_id", -1)])
+        last_cart_item = cart_collection.find_one(sort=[("cart_id", -1)])
         # If there are no items in the cart, start from 1; otherwise, increment from the maximum
         next_cart_id = last_cart_item['cart_id'] + 1 if last_cart_item else 1
 
         # Insert the new cart item with cart_id
-        await cart_collection.insert_one({
+        cart_collection.insert_one({
             "cart_id": next_cart_id,
             "user_id": user_id,
             "pet_id": pet_id
@@ -435,14 +418,14 @@ async def add_to_cart():
 
 # WORKING
 @app.route('/api/v1/getcart', methods=['POST'])
-async def get_cart():
+def get_cart():
     data = request.json
     user_id = data.get('user_id')
 
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -491,7 +474,7 @@ async def get_cart():
 
     try:
         # Run the aggregation pipeline
-        cart = await db["Cart"].aggregate(pipeline).to_list(length=None)
+        cart = list(db["Cart"].aggregate(pipeline))
 
         # Convert ObjectIds to strings for JSON compatibility
         for item in cart:
@@ -507,7 +490,7 @@ async def get_cart():
     
 # Working
 @app.route('/api/v1/removefromcart', methods=['POST'])
-async def remove_from_cart():
+def remove_from_cart():
     data = request.json
     user_id = data.get('user_id')
     pet_id = data.get('pet_id')
@@ -515,7 +498,7 @@ async def remove_from_cart():
     if not user_id or not pet_id:
         return jsonify({"error": "Missing user_id or pet_id"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -523,7 +506,7 @@ async def remove_from_cart():
 
     try:
         # Remove the item from the cart where user_id and pet_id match
-        result = await cart_collection.delete_one({"user_id": user_id, "pet_id": pet_id})
+        result = cart_collection.delete_one({"user_id": user_id, "pet_id": pet_id})
 
         if result.deleted_count == 0:
             # No document was deleted, which means the item wasn't found
@@ -536,7 +519,7 @@ async def remove_from_cart():
 
 # WORKING
 @app.route('/api/v1/confirmReservation', methods=['POST'])
-async def confirm_reservation():
+def confirm_reservation():
     data = request.json
     user_id = data.get('user_id')
     cart = data.get('cart')
@@ -544,7 +527,7 @@ async def confirm_reservation():
     if not user_id or not cart:
         return jsonify({"error": "Missing user_id or cart"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -559,11 +542,11 @@ async def confirm_reservation():
             status = 'pending'
 
             # Find the current maximum application_id and increment it
-            last_application = await applications_collection.find_one(sort=[("application_id", -1)])
+            last_application = applications_collection.find_one(sort=[("application_id", -1)])
             next_application_id = last_application['application_id'] + 1 if last_application else 1
 
             # Insert the new application
-            await applications_collection.insert_one({
+            applications_collection.insert_one({
                 "application_id": next_application_id,
                 "user_id": user_id,
                 "pet_id": pet_id,
@@ -572,7 +555,7 @@ async def confirm_reservation():
             })
 
         # Remove all items from the Cart collection for this user
-        await cart_collection.delete_many({"user_id": user_id})
+        cart_collection.delete_many({"user_id": user_id})
 
         return jsonify("Success"), 200
 
@@ -585,12 +568,12 @@ async def confirm_reservation():
 
 # WORKING
 @app.route('/api/v1/admin/deletePet', methods=['POST'])
-async def admin_login():
+def admin_login():
     data = request.json
     pet_id = data.get('pet_id')
     user_id = data.get('user_id')
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -603,27 +586,27 @@ async def admin_login():
 
     try:
         # Check if the user has admin permissions
-        user = await users_collection.find_one({"user_id": user_id})
+        user = users_collection.find_one({"user_id": user_id})
         if not user or user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 400
 
         # Get the pet_condition_id from Pet_Info
-        pet_info = await pet_info_collection.find_one({"pet_id": pet_id})
+        pet_info = pet_info_collection.find_one({"pet_id": pet_id})
         if pet_info is None:
             return jsonify({"error": "Pet not found"}), 404
 
         pet_condition_id = pet_info.get("pet_condition_id")
 
         # Delete associated records in Favourites, Cart, and Applications
-        await favourites_collection.delete_many({"pet_id": pet_id})
-        await cart_collection.delete_many({"pet_id": pet_id})
-        await applications_collection.delete_many({"pet_id": pet_id})
+        favourites_collection.delete_many({"pet_id": pet_id})
+        cart_collection.delete_many({"pet_id": pet_id})
+        applications_collection.delete_many({"pet_id": pet_id})
 
         # Delete the pet from Pet_Info
-        await pet_info_collection.delete_one({"pet_id": pet_id})
+        pet_info_collection.delete_one({"pet_id": pet_id})
 
         # Delete the pet condition from Pet_Condition
-        await pet_condition_collection.delete_one({"pet_condition_id": pet_condition_id})
+        pet_condition_collection.delete_one({"pet_condition_id": pet_condition_id})
 
         return jsonify({"message": "Pet deleted successfully"}), 200
 
@@ -632,7 +615,7 @@ async def admin_login():
 
 # working
 @app.route('/api/v1/admin/editPet', methods=['POST'])
-async def admin_edit_pet():
+def admin_edit_pet():
     data = request.json
     pet_data = data.get('pet_data')
     user_id = data.get('user_id')
@@ -641,7 +624,7 @@ async def admin_edit_pet():
     if not pet_data or not user_id:
         return jsonify({"error": "Missing required fields"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -651,12 +634,12 @@ async def admin_edit_pet():
 
     try:
         # Check if the user has admin permissions
-        user = await users_collection.find_one({"user_id": user_id})
+        user = users_collection.find_one({"user_id": user_id})
         if not user or user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 400
 
         # Get the pet_condition_id from Pet_Info
-        pet_info = await pet_info_collection.find_one({"pet_id": pet_id})
+        pet_info = pet_info_collection.find_one({"pet_id": pet_id})
         if pet_info is None:
             return jsonify({"error": "Pet not found"}), 404
 
@@ -688,7 +671,7 @@ async def admin_edit_pet():
             "age_month": int(pet_data.get('age_month')),
             "description": pet_data.get('description')
         }
-        await pet_info_collection.update_one(
+        pet_info_collection.update_one(
             {"pet_id": pet_id},
             {"$set": pet_info_update}
         )
@@ -707,7 +690,7 @@ async def admin_edit_pet():
             condition_update_data["vaccination_date"] = formatted_vaccination_date
 
         # Update Pet_Condition collection
-        await pet_condition_collection.update_one(
+        pet_condition_collection.update_one(
             {"pet_condition_id": pet_condition_id},
             {"$set": condition_update_data}
         )
@@ -720,7 +703,7 @@ async def admin_edit_pet():
 
 # WORKING
 @app.route('/api/v1/admin/addPet', methods=['POST'])
-async def admin_add_pet():
+def admin_add_pet():
     data = request.json
     pet_data = data.get('pet_data')
     user_id = data.get('user_id')
@@ -728,7 +711,7 @@ async def admin_add_pet():
     if not pet_data or not user_id:
         return jsonify({"error": "Missing required fields"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -738,16 +721,16 @@ async def admin_add_pet():
         pet_info_collection = db['Pets_Info']
 
         # Check if the user has admin permissions
-        user = await users_collection.find_one({"user_id": user_id})
+        user = users_collection.find_one({"user_id": user_id})
         if not user or user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 400
 
         # Find the maximum pet_id in Pets_Info and increment by 1
-        last_pet = await pet_info_collection.find_one(sort=[("pet_id", -1)])
+        last_pet = pet_info_collection.find_one(sort=[("pet_id", -1)])
         next_pet_id = (last_pet['pet_id'] + 1) if last_pet else 1
 
         # Find the maximum pet_condition_id in Pet_Condition and increment by 1
-        last_condition = await pet_condition_collection.find_one(sort=[("pet_condition_id", -1)])
+        last_condition = pet_condition_collection.find_one(sort=[("pet_condition_id", -1)])
         next_pet_condition_id = (last_condition['pet_condition_id'] + 1) if last_condition else 1
 
         # Parse the vaccination_date in the expected format
@@ -770,7 +753,7 @@ async def admin_add_pet():
             "adoption_fee": int(pet_data.get('adoption_fee')),
             "previous_owner": int(pet_data.get('previous_owner'))
         }
-        pet_condition_result = await pet_condition_collection.insert_one(pet_condition_data)
+        pet_condition_result = pet_condition_collection.insert_one(pet_condition_data)
 
         # Insert data into Pet_Info collection with the incremented pet_id
         pet_info_data = {
@@ -785,7 +768,7 @@ async def admin_add_pet():
             "adoption_status": "Available",
             "pet_condition_id": next_pet_condition_id
         }
-        await pet_info_collection.insert_one(pet_info_data)
+        pet_info_collection.insert_one(pet_info_data)
 
         return jsonify({"message": "Pet added successfully", "pet_id": next_pet_id}), 200
 
@@ -793,14 +776,14 @@ async def admin_add_pet():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/admin/getUsers', methods=['POST'])
-async def admin_get_users():
+def admin_get_users():
     data = request.json
     user_id = data.get('user_id')
 
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -808,12 +791,12 @@ async def admin_get_users():
         users_collection = db['Users']
 
         # Check if the user has admin permissions
-        user = await users_collection.find_one({"user_id": user_id})
+        user = users_collection.find_one({"user_id": user_id})
         if not user or user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Query all users and return specific fields
-        users = await users_collection.find({}, {"user_id": 1, "username": 1, "role": 1, "_id": 0}).to_list(length=None)
+        users = list(users_collection.find({}, {"user_id": 1, "username": 1, "role": 1, "_id": 0}))
 
         return jsonify({
             "status": "success",
@@ -826,11 +809,11 @@ async def admin_get_users():
         }), 500
 
 @app.route('/api/v1/admin/deleteUser/<int:user_id>', methods=['POST'])
-async def admin_delete_user(user_id):
+def admin_delete_user(user_id):
     data = request.json
     admin_id = data.get('admin_id')
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -838,12 +821,12 @@ async def admin_delete_user(user_id):
         users_collection = db['Users']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
+        admin_user = users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Delete the user
-        result = await users_collection.delete_one({"user_id": user_id})
+        result = users_collection.delete_one({"user_id": user_id})
 
         if result.deleted_count == 0:
             return jsonify({"error": "User not found"}), 404
@@ -856,7 +839,7 @@ async def admin_delete_user(user_id):
 from werkzeug.security import generate_password_hash
 
 @app.route('/api/v1/admin/addUser', methods=['POST'])
-async def admin_add_user():
+def admin_add_user():
     data = request.json
     admin_id = data.get('admin_id')
     username = data.get('username')
@@ -866,7 +849,7 @@ async def admin_add_user():
     if not all([admin_id, username, password, role]):
         return jsonify({"error": "All fields are required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -874,7 +857,7 @@ async def admin_add_user():
         users_collection = db['Users']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
+        admin_user = users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
@@ -882,7 +865,7 @@ async def admin_add_user():
         hashed_password = generate_password_hash(password)
 
         # Find the current maximum user_id and increment it
-        last_user = await users_collection.find_one(sort=[("user_id", -1)])
+        last_user = users_collection.find_one(sort=[("user_id", -1)])
         next_user_id = last_user['user_id'] + 1 if last_user else 1
 
         # Insert the new user
@@ -892,7 +875,7 @@ async def admin_add_user():
             "password": hashed_password,
             "role": role
         }
-        await users_collection.insert_one(new_user)
+        users_collection.insert_one(new_user)
 
         return jsonify({"status": "success", "message": "User added successfully"}), 201
 
@@ -900,14 +883,14 @@ async def admin_add_user():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/v1/admin/getUser/<int:user_id>', methods=['POST'])
-async def admin_get_user(user_id):
+def admin_get_user(user_id):
     data = request.json
     admin_id = data.get('admin_id')
 
     if not admin_id:
         return jsonify({"error": "Admin ID is required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -915,12 +898,12 @@ async def admin_get_user(user_id):
         users_collection = db['Users']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
+        admin_user = users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Fetch the user details
-        user = await users_collection.find_one({"user_id": user_id}, {"_id": 0, "user_id": 1, "username": 1, "role": 1})
+        user = users_collection.find_one({"user_id": user_id}, {"_id": 0, "user_id": 1, "username": 1, "role": 1})
 
         if not user:
             return jsonify({"error": "User not found"}), 404
@@ -939,7 +922,7 @@ async def admin_get_user(user_id):
 
 # WORKING
 @app.route('/api/v1/admin/updateUser/<int:user_id>', methods=['POST'])
-async def admin_update_user(user_id):
+def admin_update_user(user_id):
     data = request.json
     admin_id = data.get('admin_id')
     username = data.get('username')
@@ -950,7 +933,7 @@ async def admin_update_user(user_id):
         return jsonify({"error": "All fields are required"}), 400
 
     # Connect to the database
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -958,12 +941,12 @@ async def admin_update_user(user_id):
         users_collection = db['Users']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
+        admin_user = users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Retrieve the user being updated to check the current role
-        user = await users_collection.find_one({"user_id": user_id})
+        user = users_collection.find_one({"user_id": user_id})
         if not user:
             return jsonify({"error": "User not found"}), 404
 
@@ -974,7 +957,7 @@ async def admin_update_user(user_id):
             print(f"Escalating privileges for user_id {user_id} from 'adopter' to 'admin'.")
 
         # Update the user information, including the role
-        result = await users_collection.update_one(
+        result = users_collection.update_one(
             {"user_id": user_id},
             {"$set": {"username": username, "role": role}}
         )
@@ -997,14 +980,14 @@ async def admin_update_user(user_id):
 from bson import ObjectId
 
 @app.route('/api/v1/admin/getApplications', methods=['POST'])
-async def admin_get_applications():
+def admin_get_applications():
     data = request.json
     admin_id = data.get('admin_id')
 
     if not admin_id:
         return jsonify({"error": "Admin ID is required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -1014,12 +997,12 @@ async def admin_get_applications():
         pets_info_collection = db['Pets_Info']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
+        admin_user = users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Aggregate data from Applications, Users, and Pets_Info collections
-        applications = await applications_collection.aggregate([
+        applications = list(applications_collection.aggregate([
             {
                 "$lookup": {
                     "from": "Users",
@@ -1051,7 +1034,7 @@ async def admin_get_applications():
                     "pet_name": "$pet_info.name"
                 }
             }
-        ]).to_list(length=None)
+        ]))
 
         # Convert ObjectId fields to strings
         for application in applications:
@@ -1069,14 +1052,14 @@ async def admin_get_applications():
         }), 500
 
 @app.route('/api/v1/admin/getApplications/<int:application_id>', methods=['POST'])
-async def admin_get_application_detail(application_id):
+def admin_get_application_detail(application_id):
     data = request.json
     user_id = data.get('user_id')
 
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -1086,12 +1069,12 @@ async def admin_get_application_detail(application_id):
         pets_info_collection = db['Pets_Info']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": user_id})
+        admin_user = users_collection.find_one({"user_id": user_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Aggregate data from Applications, Users, and Pets_Info collections
-        application_detail = await applications_collection.aggregate([
+        application_detail = list(applications_collection.aggregate([
             {"$match": {"application_id": application_id}},  # Match specific application ID
             {"$lookup": {
                 "from": "Users",
@@ -1122,7 +1105,7 @@ async def admin_get_application_detail(application_id):
                 "applicant_id": "$user_info.user_id",
                 "applicant_username": "$user_info.username"
             }}
-        ]).to_list(length=None)
+        ]))
 
         # Handle case if no application is found
         if not application_detail:
@@ -1152,7 +1135,7 @@ async def admin_get_application_detail(application_id):
         }), 500
 
 @app.route('/api/v1/admin/updateApplicationStatus/<int:application_id>', methods=['POST'])
-async def update_application_status(application_id):
+def update_application_status(application_id):
     data = request.json
     print(data)
     new_status = data.get('status')
@@ -1160,7 +1143,7 @@ async def update_application_status(application_id):
     applicant_id = data.get('applicant_id')  # Applicant's user ID
     pet_id = data.get('pet_id')
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -1171,12 +1154,12 @@ async def update_application_status(application_id):
         pets_info_collection = db['Pets_Info']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
+        admin_user = users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Update the application status
-        update_result = await applications_collection.update_one(
+        update_result = applications_collection.update_one(
             {"application_id": application_id},
             {"$set": {"status": new_status}}
         )
@@ -1187,13 +1170,13 @@ async def update_application_status(application_id):
         # If the status is approved, insert a new record into Adoptions
         if new_status == 'approved':
             # Update pet's adoption_status to "Unavailable"
-            await pets_info_collection.update_one(
+            pets_info_collection.update_one(
                 {"pet_id": pet_id},
                 {"$set": {"adoption_status": "Unavailable"}}
             )
             
             # Find the current maximum adoption_id
-            last_adoption = await adoptions_collection.find_one(sort=[("adoption_id", -1)])
+            last_adoption = adoptions_collection.find_one(sort=[("adoption_id", -1)])
             next_adoption_id = last_adoption["adoption_id"] + 1 if last_adoption else 1
 
             # Define the adoption date in the desired ISO format
@@ -1207,7 +1190,7 @@ async def update_application_status(application_id):
                 "user_id": applicant_id  # Correct user ID
                 
             }
-            await adoptions_collection.insert_one(adoption_data)
+            adoptions_collection.insert_one(adoption_data)
 
         return jsonify({
             "status": "success",
@@ -1222,14 +1205,14 @@ async def update_application_status(application_id):
 
 
 @app.route('/api/v1/admin/getAdoptions', methods=['POST'])
-async def admin_get_adoptions():
+def admin_get_adoptions():
     data = request.json
     user_id = data.get('user_id')
 
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
 
-    db = await get_db_connection()
+    db = get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
@@ -1240,12 +1223,12 @@ async def admin_get_adoptions():
         applications_collection = db['Applications']
 
         # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": user_id})
+        admin_user = users_collection.find_one({"user_id": user_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
         # Aggregate data from Adoptions, Users, Pets_Info, and Applications collections
-        adoptions = await adoptions_collection.aggregate([
+        adoptions = list(adoptions_collection.aggregate([
             # Lookup adopter details from Users collection
             {
                 "$lookup": {
@@ -1297,7 +1280,7 @@ async def admin_get_adoptions():
             },
             # Sort by adoption_date in descending order
             {"$sort": {"adoption_date": -1}}
-        ]).to_list(length=None)
+        ]))
 
         # Convert ObjectId fields and datetime to strings for JSON serialization
         for adoption in adoptions:
