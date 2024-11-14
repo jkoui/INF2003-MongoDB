@@ -10,7 +10,7 @@ export default function Pets(): JSX.Element {
     data: {},
   });
   const [loading, setLoading] = useState(true);
-  const [favouritedPets, setFavouritedPets] = useState<any>([]);
+  const [setFavouritedPets] = useState<any>([]);
   const [reservedPets, setReservedPets] = useState<any>([]);
   const [searchedValue, setSearchedValue] = useState<any>({
     value: "",
@@ -45,10 +45,6 @@ export default function Pets(): JSX.Element {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    getPets();
-  }, []);
 
   function changeSearchType(type: string) {
     setSearchedValue({ ...searchedValue, value: "", type: type });

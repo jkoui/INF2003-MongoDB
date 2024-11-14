@@ -3,18 +3,21 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
 import os
+import time
 from motor.motor_asyncio import AsyncIOMotorClient
-
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
 app.secret_key = "inf2002dbprojectpartone"
+
+query_count = 0
+throughput_start_time = time.time()
 
 async def get_db_connection():
     try:
@@ -28,18 +31,10 @@ async def get_db_connection():
         return None
 
 async def create_indexes(db):
-    # Users Collection - Index username and user_id for fast lookups
-    await db['Users'].create_index([('user_id', 1)], unique=True)
     await db['Users'].create_index([('username', 1)], unique=True)
-    
-    # Pets_Info Collection - Index pet_id for quick access and type for filtering
-    await db['Pets_Info'].create_index([('pet_id', 1)], unique=True)
-    await db['Pets_Info'].create_index([('type', 1)])  # Index on 'type' for filtering pets by type
-    
-    # Favourites Collection - Compound index on user_id and pet_id to avoid duplicates
-    await db['Favourites'].create_index([('user_id', 1), ('pet_id', 1)], unique=True)
-    
-    print("Indexes created successfully")
+    await db['Pets_Info'].create_index([('type', 1)])
+    await db['Pets_Info'].create_index([('health_condition', 1)])
+    await db['Pets_Info'].create_index([('sterilisation_status', 1)])
 
 # concurrency in the case where 2 users register at the same time
 async def get_next_user_id(db):
@@ -125,7 +120,6 @@ async def login():
 
 # WORKING
 @app.route('/api/v1/getPets', methods=['GET'])
-@app.route('/api/v1/getPets', methods=['GET'])
 async def get_all_pets():
     db = await get_db_connection()
     if db is None:
@@ -142,7 +136,14 @@ async def get_all_pets():
         {"$unwind": {"path": "$condition_info", "preserveNullAndEmptyArrays": True}}
     ]
     
+    start_time = time.time()
     pets = await pet_info_collection.aggregate(pipeline).to_list(length=None)
+    end_time = time.time()
+
+    query_time = end_time - start_time
+    print(f"Query Time: {query_time:.4f} seconds")
+
+
     for pet in pets:
         pet['_id'] = str(pet['_id'])
         if pet.get('condition_info') and '_id' in pet['condition_info']:
@@ -200,6 +201,11 @@ async def get_top3():
 # WORKING
 @app.route('/api/v1/filterpets', methods=['POST'])
 async def filter_pets():
+
+    global query_count, throughput_start_time
+
+    query_count += 1
+
     data = request.json
 
     # Extract search filters
@@ -247,7 +253,12 @@ async def filter_pets():
         ]
 
         # Fetch filtered pets
+        query_start_time = time.time()
         pets = await pets_info_collection.aggregate(pipeline).to_list(length=None)
+        end_time = time.time()
+
+        query_time = end_time - query_start_time
+        print(f"Query Time: {query_time:.4f} seconds")
 
         # Convert ObjectId fields to strings
         for pet in pets:
@@ -258,6 +269,16 @@ async def filter_pets():
                 for key, value in pet["condition_info"].items():
                     if isinstance(value, ObjectId):
                         pet["condition_info"][key] = str(value)
+
+        
+        # Calculate and display throughput every minute
+        elapsed_time = time.time() - throughput_start_time
+        if elapsed_time >= 60:  # Calculate throughput every 60 seconds
+            qps = query_count / elapsed_time
+            print(f"Query Throughput: {qps:.2f} queries per second")
+            # Reset counter and start time
+            query_count = 0
+            throughput_start_time = time.time()
 
         return jsonify(pets), 200
 
@@ -497,6 +518,7 @@ async def get_cart():
 
     try:
         # Run the aggregation pipeline
+
         cart = await db["Cart"].aggregate(pipeline).to_list(length=None)
 
         # Convert ObjectIds to strings for JSON compatibility
