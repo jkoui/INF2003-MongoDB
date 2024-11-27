@@ -1,3 +1,5 @@
+import asyncio
+import sys
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,7 +15,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
+# CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
+#for hosting
+CORS(app, resources={r"/*": {"origins": "http://54.251.76.117:5173/"}}, supports_credentials=True)
 app.secret_key = "inf2002dbprojectpartone"
 
 query_count = 0
@@ -1349,6 +1353,14 @@ async def admin_get_adoptions():
 
 
 if __name__ == '__main__':
+    if sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    loop = asyncio.get_event_loop()
+    db = loop.run_until_complete(get_db_connection())
+    if db:
+        loop.run_until_complete(create_indexes(db))
+
     app.run(debug=True)
 
 
