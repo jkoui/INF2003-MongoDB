@@ -1,16 +1,14 @@
 blinker==1.8.2
 cachelib==0.13.0
 click==8.1.7
-dnspython==2.7.0
 Flask==3.0.3
 Flask-Cors==4.0.1
 Flask-Session==0.8.0
 itsdangerous==2.2.0
 Jinja2==3.1.4
 MarkupSafe==2.1.5
-motor==3.6.0
 msgspec==0.18.6
 mysql-connector-python==9.0.0
-pymongo==4.9.2
 python-dotenv==1.0.1
 Werkzeug==3.0.4
+pymongo==4.10.1
