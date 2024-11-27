@@ -16,3 +16,8 @@
 • Make sure Docker Desktop app is downloaded  
 • Go to root folder  
 • Run "docker-compose up --build"  
+
+### Deploying on Edge
+• Set up AWS EC2 instance with cloned project
+• Install Docker on instance and run "docker-compose up --build"  
+• Deploy EC2 instance on Amazon Cloudfront after buying a domain
