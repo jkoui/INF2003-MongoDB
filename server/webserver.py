@@ -15,9 +15,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 load_dotenv()
 
 app = Flask(__name__)
-# CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
 #for hosting
-CORS(app, resources={r"/*": {"origins": "http://54.251.76.117:5173/"}}, supports_credentials=True)
+# CORS(app, resources={r"/*": {"origins": "http://54.251.76.117:5173/"}}, supports_credentials=True)
 app.secret_key = "inf2002dbprojectpartone"
 
 query_count = 0
