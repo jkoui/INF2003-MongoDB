@@ -122,9 +122,10 @@ async def login():
 --- Pets Endpoints ---
 """
 
-# WORKING
+#WORKING
 @app.route('/api/v1/getPets', methods=['GET'])
 async def get_all_pets():
+    start_time = time.time()
     db = await get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
@@ -140,11 +141,11 @@ async def get_all_pets():
         {"$unwind": {"path": "$condition_info", "preserveNullAndEmptyArrays": True}}
     ]
     
-    start_time = time.time()
+    query_start_time = time.time()
     pets = await pet_info_collection.aggregate(pipeline).to_list(length=None)
-    end_time = time.time()
+    query_end_time = time.time()
 
-    query_time = end_time - start_time
+    query_time = query_end_time - query_start_time
     print(f"Query Time: {query_time:.4f} seconds")
 
 
@@ -153,8 +154,11 @@ async def get_all_pets():
         if pet.get('condition_info') and '_id' in pet['condition_info']:
             pet['condition_info']['_id'] = str(pet['condition_info']['_id'])
 
-    return jsonify(pets), 200
+    end_time = time.time()
+    total_time = end_time - start_time
+    print(f"Total Response Time: {total_time:.4f} seconds")
 
+    return jsonify(pets), 200
 
 # WORKING
 @app.route('/api/v1/getTop3', methods=['GET'])
