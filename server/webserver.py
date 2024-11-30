@@ -240,7 +240,6 @@ async def filter_pets():
     try:
         pets_info_collection = db['Pets_Info']
 
-        # Aggregation pipeline with match conditions
         pipeline = [
             {"$lookup": {
                 "from": "Pet_Condition",
@@ -562,7 +561,7 @@ async def remove_from_cart():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# WORKING
+# conversion to transactions
 @app.route('/api/v1/confirmReservation', methods=['POST'])
 async def confirm_reservation():
     data = request.json
@@ -571,49 +570,79 @@ async def confirm_reservation():
 
     if not user_id or not cart:
         return jsonify({"error": "Missing user_id or cart"}), 400
-
+    
     db = await get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
-
+    
+    # get collection references
     applications_collection = db['Applications']
     cart_collection = db['Cart']
+    pets_info_collection = db['Pets_Info']
 
-    try:
-        # For each pet in the cart, create a new application
-        for item in cart:
-            pet_id = item.get('pet_id')
-            submission_date = datetime.now(timezone.utc)
-            status = 'pending'
+    async with await db.client.start_session() as session:
+        try:
+            # starting the transaction
+            async with session.start_transaction():
+                # process each pet in the cart within the transaction
+                for item in cart:
+                    pet_id = item.get('pet_id')
+                    submission_date = datetime.now(timezone.utc)
+                    status = 'pending'
 
-            # Find the current maximum application_id and increment it
-            last_application = await applications_collection.find_one(sort=[("application_id", -1)])
-            next_application_id = last_application['application_id'] + 1 if last_application else 1
+                    # verify if pet is available before proceeding
+                    pet_info = await pets_info_collection.find_one(
+                        {"pet_id": pet_id, "adoption_status": "Available"},
+                        session=session
+                    )
+                    if not pet_info:
+                        raise ValueError(f"Pet {pet_id} is not available for adoption")
 
-            # Insert the new application
-            await applications_collection.insert_one({
-                "application_id": next_application_id,
-                "user_id": user_id,
-                "pet_id": pet_id,
-                "submission_date": submission_date,
-                "status": status
-            })
+                    # find max application_id within the transaction
+                    last_application = await applications_collection.find_one(
+                        sort=[("application_id", -1)],
+                        session=session
+                    )
+                    next_application_id = last_application['application_id'] + 1 if last_application else 1
 
-        # Remove all items from the Cart collection for this user
-        await cart_collection.delete_many({"user_id": user_id})
+                    # insert the new application within the transaction
+                    await applications_collection.insert_one({
+                        "application_id": next_application_id,
+                        "user_id": user_id,
+                        "pet_id": pet_id,
+                        "submission_date": submission_date,
+                        "status": status
+                    }, session=session)
 
-        return jsonify("Success"), 200
+                    # update pet's adoption status to pending
+                    await pets_info_collection.update_one(
+                        {"pet_id": pet_id},
+                        {"$set": {"adoption_status": "Pending"}},
+                        session=session
+                    )
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
+                # remove all items from the cart within the transaction
+                await cart_collection.delete_many({"user_id": user_id}, session=session)
+
+                return jsonify({"message": "Reservation confirmed successfully"}), 200
+
+        except ValueError as e:
+            # handle validation errors
+            return jsonify({"error": str(e)}), 400
+        except DuplicateKeyError:
+            # handle duplicate application errors
+            return jsonify({"error": "Application already exists"}), 400
+        except Exception as e:
+            # rollback the transaction in case of an error
+            return jsonify({"error": f"Transaction failed: {str(e)}"}), 500
+
 """
 --- Admin Endpoints ---
 """
 
 # WORKING
 @app.route('/api/v1/admin/deletePet', methods=['POST'])
-async def admin_login():
+async def admin_delete_pet():
     data = request.json
     pet_id = data.get('pet_id')
     user_id = data.get('user_id')
@@ -622,6 +651,7 @@ async def admin_login():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
+    # get collection references
     users_collection = db['Users']
     pet_info_collection = db['Pets_Info']
     pet_condition_collection = db['Pet_Condition']
@@ -629,34 +659,63 @@ async def admin_login():
     cart_collection = db['Cart']
     applications_collection = db['Applications']
 
-    try:
-        # Check if the user has admin permissions
-        user = await users_collection.find_one({"user_id": user_id})
-        if not user or user.get("role") != "admin":
-            return jsonify({"error": "Invalid Permissions"}), 400
+    # start session for transaction
+    async with await db.client.start_session() as session:
+        try:
+            # starting the transaction
+            async with session.start_transaction():
+                # check if the user has admin permissions
+                user = await users_collection.find_one(
+                    {"user_id": user_id}, 
+                    session=session
+                )
+                if not user or user.get("role") != "admin":
+                    raise ValueError("Invalid Permissions")
 
-        # Get the pet_condition_id from Pet_Info
-        pet_info = await pet_info_collection.find_one({"pet_id": pet_id})
-        if pet_info is None:
-            return jsonify({"error": "Pet not found"}), 404
+                # get the pet_condition_id from Pet_Info
+                pet_info = await pet_info_collection.find_one(
+                    {"pet_id": pet_id}, 
+                    session=session
+                )
+                if pet_info is None:
+                    raise ValueError("Pet not found")
 
-        pet_condition_id = pet_info.get("pet_condition_id")
+                pet_condition_id = pet_info.get("pet_condition_id")
 
-        # Delete associated records in Favourites, Cart, and Applications
-        await favourites_collection.delete_many({"pet_id": pet_id})
-        await cart_collection.delete_many({"pet_id": pet_id})
-        await applications_collection.delete_many({"pet_id": pet_id})
+                # delete associated records in Favourites, Cart, and Applications within transaction
+                await favourites_collection.delete_many(
+                    {"pet_id": pet_id}, 
+                    session=session
+                )
+                await cart_collection.delete_many(
+                    {"pet_id": pet_id}, 
+                    session=session
+                )
+                await applications_collection.delete_many(
+                    {"pet_id": pet_id}, 
+                    session=session
+                )
 
-        # Delete the pet from Pet_Info
-        await pet_info_collection.delete_one({"pet_id": pet_id})
+                # delete the pet from Pet_Info within transaction
+                await pet_info_collection.delete_one(
+                    {"pet_id": pet_id}, 
+                    session=session
+                )
 
-        # Delete the pet condition from Pet_Condition
-        await pet_condition_collection.delete_one({"pet_condition_id": pet_condition_id})
+                # delete the pet condition from Pet_Condition within transaction
+                await pet_condition_collection.delete_one(
+                    {"pet_condition_id": pet_condition_id}, 
+                    session=session
+                )
 
-        return jsonify({"message": "Pet deleted successfully"}), 200
+                return jsonify({"message": "Pet deleted successfully"}), 200
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        except ValueError as e:
+            # handle validation errors
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            # rollback the transaction in case of an error
+            return jsonify({"error": f"Transaction failed: {str(e)}"}), 500
 
 # working
 @app.route('/api/v1/admin/editPet', methods=['POST'])
@@ -760,65 +819,92 @@ async def admin_add_pet():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    try:
-        users_collection = db['Users']
-        pet_condition_collection = db['Pet_Condition']
-        pet_info_collection = db['Pets_Info']
+    # get collection references
+    users_collection = db['Users']
+    pet_condition_collection = db['Pet_Condition']
+    pet_info_collection = db['Pets_Info']
 
-        # Check if the user has admin permissions
-        user = await users_collection.find_one({"user_id": user_id})
-        if not user or user.get("role") != "admin":
-            return jsonify({"error": "Invalid Permissions"}), 400
+    async with await db.client.start_session() as session:
+        try:
+            # starting the transaction
+            async with session.start_transaction():
+                # verify admin permissions within transaction
+                user = await users_collection.find_one(
+                    {"user_id": user_id},
+                    session=session
+                )
+                if not user or user.get("role") != "admin":
+                    raise ValueError("Invalid Permissions")
 
-        # Find the maximum pet_id in Pets_Info and increment by 1
-        last_pet = await pet_info_collection.find_one(sort=[("pet_id", -1)])
-        next_pet_id = (last_pet['pet_id'] + 1) if last_pet else 1
+                # get next pet_id within transaction
+                last_pet = await pet_info_collection.find_one(
+                    sort=[("pet_id", -1)],
+                    session=session
+                )
+                next_pet_id = (last_pet['pet_id'] + 1) if last_pet else 1
 
-        # Find the maximum pet_condition_id in Pet_Condition and increment by 1
-        last_condition = await pet_condition_collection.find_one(sort=[("pet_condition_id", -1)])
-        next_pet_condition_id = (last_condition['pet_condition_id'] + 1) if last_condition else 1
+                # get next condition_id within transaction
+                last_condition = await pet_condition_collection.find_one(
+                    sort=[("pet_condition_id", -1)],
+                    session=session
+                )
+                next_pet_condition_id = (last_condition['pet_condition_id'] + 1) if last_condition else 1
 
-        # Parse the vaccination_date in the expected format
-        vaccination_date_str = pet_data.get('vaccination_date')
-        formatted_vaccination_date = None
-        if vaccination_date_str:
-            try:
-                formatted_vaccination_date = datetime.fromisoformat(vaccination_date_str.replace("Z", "+00:00"))
-            except ValueError as e:
-                print(f"Error parsing vaccination date: {e}")
-                return jsonify({"error": "Invalid vaccination date format."}), 400
+                # parse vaccination date
+                vaccination_date_str = pet_data.get('vaccination_date')
+                formatted_vaccination_date = None
+                if vaccination_date_str:
+                    try:
+                        formatted_vaccination_date = datetime.fromisoformat(
+                            vaccination_date_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        raise ValueError("Invalid vaccination date format")
 
-        # Insert data into Pet_Condition collection with the incremented pet_condition_id
-        pet_condition_data = {
-            "pet_condition_id": next_pet_condition_id,
-            "weight": int(pet_data.get('weight')),
-            "vaccination_date": formatted_vaccination_date,
-            "health_condition": pet_data.get('health_condition'),
-            "sterilisation_status": int(pet_data.get('sterilisation_status')),
-            "adoption_fee": int(pet_data.get('adoption_fee')),
-            "previous_owner": int(pet_data.get('previous_owner'))
-        }
-        pet_condition_result = await pet_condition_collection.insert_one(pet_condition_data)
+                # create pet condition within transaction
+                pet_condition_data = {
+                    "pet_condition_id": next_pet_condition_id,
+                    "weight": int(pet_data.get('weight')),
+                    "vaccination_date": formatted_vaccination_date,
+                    "health_condition": pet_data.get('health_condition'),
+                    "sterilisation_status": int(pet_data.get('sterilisation_status')),
+                    "adoption_fee": int(pet_data.get('adoption_fee')),
+                    "previous_owner": int(pet_data.get('previous_owner'))
+                }
+                await pet_condition_collection.insert_one(
+                    pet_condition_data,
+                    session=session
+                )
 
-        # Insert data into Pet_Info collection with the incremented pet_id
-        pet_info_data = {
-            "pet_id": next_pet_id,
-            "name": pet_data.get('name'),
-            "type": pet_data.get('type'),
-            "breed": pet_data.get('breed'),
-            "gender": pet_data.get('gender'),
-            "age_month": int(pet_data.get('age_month')),
-            "description": pet_data.get('description'),
-            "image": pet_data.get('image'),
-            "adoption_status": "Available",
-            "pet_condition_id": next_pet_condition_id
-        }
-        await pet_info_collection.insert_one(pet_info_data)
+                # create pet info within transaction
+                pet_info_data = {
+                    "pet_id": next_pet_id,
+                    "name": pet_data.get('name'),
+                    "type": pet_data.get('type'),
+                    "breed": pet_data.get('breed'),
+                    "gender": pet_data.get('gender'),
+                    "age_month": int(pet_data.get('age_month')),
+                    "description": pet_data.get('description'),
+                    "image": pet_data.get('image'),
+                    "adoption_status": "Available",
+                    "pet_condition_id": next_pet_condition_id
+                }
+                await pet_info_collection.insert_one(
+                    pet_info_data,
+                    session=session
+                )
 
-        return jsonify({"message": "Pet added successfully", "pet_id": next_pet_id}), 200
+                return jsonify({
+                    "message": "Pet added successfully", 
+                    "pet_id": next_pet_id
+                }), 200
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        except ValueError as e:
+            # handle validation errors
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            # rollback the transaction in case of an error
+            return jsonify({"error": f"Transaction failed: {str(e)}"}), 500
 
 @app.route('/api/v1/admin/getUsers', methods=['POST'])
 async def admin_get_users():
@@ -1178,75 +1264,88 @@ async def admin_get_application_detail(application_id):
             "status": "error",
             "message": str(e)
         }), 500
+    
 
 @app.route('/api/v1/admin/updateApplicationStatus/<int:application_id>', methods=['POST'])
 async def update_application_status(application_id):
     data = request.json
-    print(data)
     new_status = data.get('status')
-    admin_id = data.get('user_id')  # Admin ID
-    applicant_id = data.get('applicant_id')  # Applicant's user ID
+    admin_id = data.get('user_id')  
+    applicant_id = data.get('applicant_id')  
     pet_id = data.get('pet_id')
 
     db = await get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    try:
-        users_collection = db['Users']
-        applications_collection = db['Applications']
-        adoptions_collection = db['Adoptions']
-        pets_info_collection = db['Pets_Info']
+    # get collection references
+    users_collection = db['Users']
+    applications_collection = db['Applications']
+    adoptions_collection = db['Adoptions']
+    pets_info_collection = db['Pets_Info']
 
-        # Check if the requesting user has admin permissions
-        admin_user = await users_collection.find_one({"user_id": admin_id})
-        if not admin_user or admin_user.get("role") != "admin":
-            return jsonify({"error": "Invalid Permissions"}), 403
+    async with await db.client.start_session() as session:
+        try:
+            # starting the transaction
+            async with session.start_transaction():
+                # verify admin permissions within transaction
+                admin_user = await users_collection.find_one(
+                    {"user_id": admin_id},
+                    session=session
+                )
+                if not admin_user or admin_user.get("role") != "admin":
+                    raise ValueError("Invalid Permissions")
 
-        # Update the application status
-        update_result = await applications_collection.update_one(
-            {"application_id": application_id},
-            {"$set": {"status": new_status}}
-        )
+                # update application status within transaction
+                update_result = await applications_collection.update_one(
+                    {"application_id": application_id},
+                    {"$set": {"status": new_status}},
+                    session=session
+                )
 
-        if update_result.matched_count == 0:
-            return jsonify({"error": "Application not found"}), 404
+                if update_result.matched_count == 0:
+                    raise ValueError("Application not found")
 
-        # If the status is approved, insert a new record into Adoptions
-        if new_status == 'approved':
-            # Update pet's adoption_status to "Unavailable"
-            await pets_info_collection.update_one(
-                {"pet_id": pet_id},
-                {"$set": {"adoption_status": "Unavailable"}}
-            )
-            
-            # Find the current maximum adoption_id
-            last_adoption = await adoptions_collection.find_one(sort=[("adoption_id", -1)])
-            next_adoption_id = last_adoption["adoption_id"] + 1 if last_adoption else 1
+                # if approved, handle adoption process
+                if new_status == 'approved':
+                    # update pet status within transaction
+                    pet_result = await pets_info_collection.update_one(
+                        {"pet_id": pet_id},
+                        {"$set": {"adoption_status": "Unavailable"}},
+                        session=session
+                    )
 
-            # Define the adoption date in the desired ISO format
-            today = datetime.now().isoformat()
-            # Insert a new record into Adoptions collection
-            adoption_data = {
-                "adoption_id": next_adoption_id,
-                "application_id": application_id,
-                "adoption_date": datetime.fromisoformat(today.replace("Z", "+00:00")),
-                "pet_id": pet_id,
-                "user_id": applicant_id  # Correct user ID
-                
-            }
-            await adoptions_collection.insert_one(adoption_data)
+                    if pet_result.modified_count == 0:
+                        raise ValueError("Failed to update pet status")
 
-        return jsonify({
-            "status": "success",
-            "message": "Application status updated successfully"
-        })
+                    # get next adoption id within transaction
+                    last_adoption = await adoptions_collection.find_one(
+                        sort=[("adoption_id", -1)],
+                        session=session
+                    )
+                    next_adoption_id = last_adoption["adoption_id"] + 1 if last_adoption else 1
 
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+                    # create adoption record within transaction
+                    adoption_data = {
+                        "adoption_id": next_adoption_id,
+                        "application_id": application_id,
+                        "adoption_date": datetime.now(timezone.utc),
+                        "pet_id": pet_id,
+                        "user_id": applicant_id
+                    }
+                    await adoptions_collection.insert_one(adoption_data, session=session)
+
+                return jsonify({
+                    "status": "success",
+                    "message": "Application status updated successfully"
+                })
+
+        except ValueError as e:
+            # handle validation errors
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            # rollback the transaction in case of an error
+            return jsonify({"error": f"Transaction failed: {str(e)}"}), 500
 
 
 @app.route('/api/v1/admin/getAdoptions', methods=['POST'])
