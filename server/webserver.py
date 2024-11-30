@@ -2,6 +2,7 @@ import asyncio
 import sys
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+import pymongo
 from werkzeug.security import generate_password_hash, check_password_hash
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -10,7 +11,9 @@ from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
 import os
 import time
+import traceback
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import OperationFailure
 
 load_dotenv()
 
@@ -25,9 +28,13 @@ throughput_start_time = time.time()
 
 async def get_db_connection():
     try:
+        connection_st = time.time()
         client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
         client.admin.command('ping')
         db = client[os.getenv("DATABASE_NAME")]
+        connection_et = time.time()
+        connection_time = connection_et - connection_st
+        print(f"Database connection Time: {connection_time:.4f} seconds")
         print("MongoDB connection successful!")
         return db
     except Exception as e:
@@ -40,19 +47,45 @@ async def create_indexes(db):
     await db['Pets_Info'].create_index([('health_condition', 1)])
     await db['Pets_Info'].create_index([('sterilisation_status', 1)])
 
-# concurrency in the case where 2 users register at the same time
-async def get_next_user_id(db):
-    counter = await db["counter"].find_one_and_update(
-        {"_id": "user_id"},
-        {"$inc": {"sequence_value": 1}},  #increment the sequence value by 1
-        upsert=True,
-        return_document=True
-    )
-    return counter["sequence_value"]   
+# # concurrency in the case where 2 users register at the same time
+# async def get_next_user_id(db):
+#     counter = await db["counter"].find_one_and_update(
+#         {"_id": "user_id"},
+#         {"$inc": {"sequence_value": 1}},  #increment the sequence value by 1
+#         upsert=True,
+#         return_document=True
+#     )
+#     return counter["sequence_value"]   
 
-@app.route('/api/v1')
-def index():
-    return jsonify({"message": "index"}), 200
+# @app.route('/api/v1')
+# def index():
+#     return jsonify({"message": "index"}), 200
+
+async def get_next_user_id(db, retries=3, delay=1):
+    """
+    Tries to get the next user ID with retry logic to handle concurrency issues
+    """
+    attempt = 0
+    while attempt < retries:
+        try:
+            #Increment the userID counter in the counter collection
+            counter = await db["counter"].find_one_and_update(
+                {"_id": "user_id"},
+                {"$inc": {"sequence_value": 1}},
+                upsert=True,
+                return_document=True
+            )
+            if not counter or 'sequence_value' not in counter:
+                raise Exception("Failed to get next user ID")
+            return counter["sequence_value"]
+        
+        except OperationFailure as e:
+            print(f"Retry {attempt + 1}/{retries} due to: {e}")
+            attempt += 1
+            if attempt < retries:
+                time.sleep(delay)
+            else:
+                raise Exception(f"Failed to get next user ID after {retries} retries") from e
 
 """
 --- User Log In Endpoints ---
@@ -60,6 +93,56 @@ def index():
 """
 
 @app.route('/api/v1/register', methods=['POST'])
+# async def register():
+#     data = request.json
+#     username = data.get('username')
+#     password = data.get('password')
+
+#     if not username or not password:
+#         return jsonify({"error": "Missing required fields"}), 400
+
+#     hashed_password = generate_password_hash(password)
+#     db = await get_db_connection()
+#     if db is None:
+#         return jsonify({"error": "Database connection failed"}), 500
+
+#     user_collection = db['Users']
+    
+#     try:
+
+#         registerSession = await db.client.start_session()
+
+#         async with registerSession.start_transaction():
+#             if await user_collection.find_one({"username": username}, session=registerSession):
+#                 return jsonify({"error": "Username already exists"}), 400
+        
+#             next_user_id = await get_next_user_id(db)
+
+#             await user_collection.insert_one({
+#                 "user_id": next_user_id,
+#                 "username": username,
+#                 "password": hashed_password,
+#                 "role": "adopter"
+#             }, session=registerSession)
+
+#         await registerSession.commit_transaction()
+
+#         return jsonify({"message": "User registered successfully", "user_id": next_user_id}), 201
+
+#     # except DuplicateKeyError:
+#     #     return jsonify({"error": "Username already exists"}), 400
+
+#     except Exception as e:
+#         print(f"Error during registration: {str(e)}")
+#         print(f"Full traceback: {traceback.format_exc()}")
+#         if registerSession.in_transaction:
+#             await registerSession.abort_transaction()
+            
+#         return jsonify({"error": str(e)}), 500
+    
+#     finally:
+#         await registerSession.end_session()
+
 async def register():
     data = request.json
     username = data.get('username')
@@ -76,22 +159,47 @@ async def register():
     user_collection = db['Users']
     
     try:
-        next_user_id = await get_next_user_id(db)
+        registerSession = await db.client.start_session()
+        
+        retries = 3
+        for _ in range(retries):
+            try:
+                async with registerSession.start_transaction():
+                    existing_user = await user_collection.find_one({"username": username}, session=registerSession)
+                    if existing_user:
+                        return jsonify({"error": "Username already exists"}), 400
 
-        # Insert the new user
-        await user_collection.insert_one({
-            "user_id": next_user_id,
-            "username": username,
-            "password": hashed_password,
-            "role": "adopter"
-        })
+                    next_user_id = await get_next_user_id(db)
+
+                    await user_collection.insert_one({
+                        "user_id": next_user_id,
+                        "username": username,
+                        "password": hashed_password,
+                        "role": "adopter"
+                    }, session=registerSession)
+
+                break
+            except pymongo.errors.PyMongoError as e:
+                print(f"Transaction error, retrying: {str(e)}")
+                if registerSession.in_transaction:
+                    await registerSession.abort_transaction()               
+        else:
+            return jsonify({"error": "Failed to register user after multiple attempts"}), 500
+
+        await registerSession.commit_transaction()
+
         return jsonify({"message": "User registered successfully", "user_id": next_user_id}), 201
 
-    except DuplicateKeyError:
-        return jsonify({"error": "Username already exists"}), 400
-
     except Exception as e:
+        print(f"Error during registration: {str(e)}")
+        if registerSession.in_transaction:
+            await registerSession.abort_transaction()
+            
         return jsonify({"error": str(e)}), 500
+    
+    finally:
+        await registerSession.end_session()
+
 
 @app.route('/api/v1/login', methods=['POST'])
 async def login():
