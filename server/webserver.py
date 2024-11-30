@@ -47,20 +47,6 @@ async def create_indexes(db):
     await db['Pets_Info'].create_index([('health_condition', 1)])
     await db['Pets_Info'].create_index([('sterilisation_status', 1)])
 
-# # concurrency in the case where 2 users register at the same time
-# async def get_next_user_id(db):
-#     counter = await db["counter"].find_one_and_update(
-#         {"_id": "user_id"},
-#         {"$inc": {"sequence_value": 1}},  #increment the sequence value by 1
-#         upsert=True,
-#         return_document=True
-#     )
-#     return counter["sequence_value"]   
-
-# @app.route('/api/v1')
-# def index():
-#     return jsonify({"message": "index"}), 200
-
 async def get_next_user_id(db, retries=3, delay=1):
     """
     Tries to get the next user ID with retry logic to handle concurrency issues
@@ -93,56 +79,6 @@ async def get_next_user_id(db, retries=3, delay=1):
 """
 
 @app.route('/api/v1/register', methods=['POST'])
-# async def register():
-#     data = request.json
-#     username = data.get('username')
-#     password = data.get('password')
-
-#     if not username or not password:
-#         return jsonify({"error": "Missing required fields"}), 400
-
-#     hashed_password = generate_password_hash(password)
-#     db = await get_db_connection()
-#     if db is None:
-#         return jsonify({"error": "Database connection failed"}), 500
-
-#     user_collection = db['Users']
-    
-#     try:
-
-#         registerSession = await db.client.start_session()
-
-#         async with registerSession.start_transaction():
-#             if await user_collection.find_one({"username": username}, session=registerSession):
-#                 return jsonify({"error": "Username already exists"}), 400
-        
-#             next_user_id = await get_next_user_id(db)
-
-#             await user_collection.insert_one({
-#                 "user_id": next_user_id,
-#                 "username": username,
-#                 "password": hashed_password,
-#                 "role": "adopter"
-#             }, session=registerSession)
-
-#         await registerSession.commit_transaction()
-
-#         return jsonify({"message": "User registered successfully", "user_id": next_user_id}), 201
-
-#     # except DuplicateKeyError:
-#     #     return jsonify({"error": "Username already exists"}), 400
-
-#     except Exception as e:
-#         print(f"Error during registration: {str(e)}")
-#         print(f"Full traceback: {traceback.format_exc()}")
-#         if registerSession.in_transaction:
-#             await registerSession.abort_transaction()
-            
-#         return jsonify({"error": str(e)}), 500
-    
-#     finally:
-#         await registerSession.end_session()
-
 async def register():
     data = request.json
     username = data.get('username')
@@ -415,9 +351,8 @@ async def add_favourite():
 
     print(f"Received user_id: {user_id} of type {type(user_id)}")
 
-    # Ensure that user_id is an integer
     try:
-        user_id = int(user_id)  # Convert to integer if it's not already
+        user_id = int(user_id)  
     except ValueError:
         return jsonify({"error": "User ID must be an integer"}), 400
 
@@ -428,20 +363,17 @@ async def add_favourite():
     favourites_collection = db['Favourites']
     
     try:
-        # Check if the pet is already in the user's favourites
         existing_favourite = await favourites_collection.find_one({"user_id": user_id, "pet_id": pet_id})
         if existing_favourite:
             return jsonify({"error": "Pet is already in favourites"}), 400
-
-        # Find the current maximum favourite_id
+        
         last_favourite = await favourites_collection.find_one(sort=[("favourite_id", -1)])
-        # If there are no favourites, start from 1; otherwise, increment from the maximum
         next_favourite_id = last_favourite['favourite_id'] + 1 if last_favourite else 1
 
-        # Insert the new favourite document with integer user_id
+
         await favourites_collection.insert_one({
             "favourite_id": next_favourite_id,
-            "user_id": user_id,  # This will be stored as an integer
+            "user_id": user_id,  
             "pet_id": pet_id
         })
 
@@ -470,7 +402,7 @@ async def get_reserved_pets():
 
     pets_in_applications = await db["Pets_Info"].aggregate(pipeline).to_list(length=None)
 
-    # Convert ObjectIds to strings for JSON compatibility
+    #Convert ObjectIds to strings for JSON compatibility
     for pet in pets_in_applications:
         pet['_id'] = str(pet['_id'])
 
@@ -484,7 +416,6 @@ async def get_favourites():
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
-    # Convert user_id to integer if it's stored as an integer in MongoDB
     try:
         user_id = int(user_id)
     except ValueError:
@@ -494,36 +425,32 @@ async def get_favourites():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    # Aggregation pipeline to match favourites and join with pet info and condition
     pipeline = [
         {"$match": {"user_id": user_id}},
         {"$lookup": {
-            "from": "Pets_Info",            # Collection to join with
-            "localField": "pet_id",         # Field in Favourites collection
-            "foreignField": "pet_id",       # Field in Pet_Info collection
+            "from": "Pets_Info",            
+            "localField": "pet_id",         
+            "foreignField": "pet_id",       
             "as": "pet_details"
         }},
-        {"$unwind": "$pet_details"},       # Unwind to get pet details as a flat structure
+        {"$unwind": "$pet_details"},       
         {"$lookup": {
-            "from": "Pet_Condition",        # Collection to join with for pet condition info
-            "localField": "pet_details.pet_condition_id",  # Field in pet details
-            "foreignField": "pet_condition_id",            # Field in Pet_Condition collection
+            "from": "Pet_Condition",        
+            "localField": "pet_details.pet_condition_id",  
+            "foreignField": "pet_condition_id",            
             "as": "condition_info"
         }},
         {"$unwind": {
             "path": "$condition_info",
             "preserveNullAndEmptyArrays": True
         }},
-        {"$addFields": {"pet_details.condition_info": "$condition_info"}},  # Embed condition info in pet details
-        {"$replaceRoot": {"newRoot": "$pet_details"}}  # Replace root with pet details including condition info
+        {"$addFields": {"pet_details.condition_info": "$condition_info"}},  
+        {"$replaceRoot": {"newRoot": "$pet_details"}}  
     ]
 
     try:
-        # Run the aggregation pipeline
         favourited_pets = await db["Favourites"].aggregate(pipeline).to_list(length=None)
 
-
-        # Convert ObjectIds to strings for JSON compatibility
         for pet in favourited_pets:
             if "_id" in pet:
                 pet["_id"] = str(pet["_id"])
@@ -553,17 +480,13 @@ async def add_to_cart():
     cart_collection = db['Cart']
     
     try:
-        # Check if the pet is already in the user's cart
         existing_cart_item = await cart_collection.find_one({"user_id": user_id, "pet_id": pet_id})
         if existing_cart_item:
             return jsonify({"error": "Pet is already in cart"}), 400
 
-        # Find the current maximum cart_id
         last_cart_item = await cart_collection.find_one(sort=[("cart_id", -1)])
-        # If there are no items in the cart, start from 1; otherwise, increment from the maximum
         next_cart_id = last_cart_item['cart_id'] + 1 if last_cart_item else 1
 
-        # Insert the new cart item with cart_id
         await cart_collection.insert_one({
             "cart_id": next_cart_id,
             "user_id": user_id,
@@ -588,23 +511,22 @@ async def get_cart():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    # Define the aggregation pipeline
     pipeline = [
-        {"$match": {"user_id": user_id}},  # Filter by user_id in the Cart collection
+        {"$match": {"user_id": user_id}}, 
         {"$lookup": {
             "from": "Pets_Info",
             "localField": "pet_id",
             "foreignField": "pet_id",
             "as": "pets_info"
         }},
-        {"$unwind": "$pets_info"},  # Flatten pet_info array to include each pet's details
+        {"$unwind": "$pets_info"},  
         {"$lookup": {
             "from": "Pet_Condition",
             "localField": "pets_info.pet_condition_id",
             "foreignField": "pet_condition_id",
             "as": "pets_info.pet_condition"
         }},
-        {"$unwind": "$pets_info.pet_condition"},  # Flatten pet_condition array
+        {"$unwind": "$pets_info.pet_condition"}, 
         {"$lookup": {
             "from": "Condition_Info",
             "localField": "pets_info.pet_condition.condition_info_id",
@@ -614,7 +536,7 @@ async def get_cart():
         {"$unwind": {
             "path": "$pets_info.pet_condition.condition_info",
             "preserveNullAndEmptyArrays": True
-        }},  # Flatten pet_condition array
+        }},  
         {"$project": {
             "cart_id": 1,
             "user_id": 1,
@@ -627,16 +549,13 @@ async def get_cart():
             "description": "$pets_info.description",
             "adoption_status": "$pets_info.adoption_status",
             "image": "$pets_info.image",  
-            "pet_condition": "$pets_info.pet_condition"  # Include pet condition details
+            "pet_condition": "$pets_info.pet_condition"  
         }}
     ]
 
     try:
-        # Run the aggregation pipeline
-
         cart = await db["Cart"].aggregate(pipeline).to_list(length=None)
 
-        # Convert ObjectIds to strings for JSON compatibility
         for item in cart:
             if '_id' in item:
                 item['_id'] = str(item['_id'])
@@ -665,11 +584,9 @@ async def remove_from_cart():
     cart_collection = db['Cart']
 
     try:
-        # Remove the item from the cart where user_id and pet_id match
         result = await cart_collection.delete_one({"user_id": user_id, "pet_id": pet_id})
 
         if result.deleted_count == 0:
-            # No document was deleted, which means the item wasn't found
             return jsonify({"error": "Item not found in cart"}), 404
 
         return jsonify("Success"), 200
@@ -706,7 +623,6 @@ async def confirm_reservation():
                     submission_date = datetime.now(timezone.utc)
                     status = 'pending'
 
-                    # verify if pet is available before proceeding
                     pet_info = await pets_info_collection.find_one(
                         {"pet_id": pet_id, "adoption_status": "Available"},
                         session=session
@@ -853,12 +769,10 @@ async def admin_edit_pet():
     pet_condition_collection = db['Pet_Condition']
 
     try:
-        # Check if the user has admin permissions
         user = await users_collection.find_one({"user_id": user_id})
         if not user or user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 400
 
-        # Get the pet_condition_id from Pet_Info
         pet_info = await pet_info_collection.find_one({"pet_id": pet_id})
         if pet_info is None:
             return jsonify({"error": "Pet not found"}), 404
@@ -867,7 +781,6 @@ async def admin_edit_pet():
         if not pet_condition_id:
             return jsonify({"error": "Pet condition not linked"}), 404
 
-        # Parse vaccination_date if present
         vaccination_date_str = pet_data.get('vaccination_date')
         formatted_vaccination_date = None
         if vaccination_date_str:
@@ -876,13 +789,11 @@ async def admin_edit_pet():
             except ValueError as e:
                 print(f"Error parsing vaccination date: {e}")
 
-        # Prepare data for Pet_Info update
         pet_type = pet_data.get('type')
         new_type = ','.join(pet_type) if isinstance(pet_type, list) else pet_type
         gender = pet_data.get('gender')
         new_gender = gender[0] if isinstance(gender, list) and gender else gender
 
-        # Update Pet_Info collection
         pet_info_update = {
             "name": pet_data.get('name'),
             "type": new_type,
@@ -896,7 +807,6 @@ async def admin_edit_pet():
             {"$set": pet_info_update}
         )
 
-        # Prepare data for Pet_Condition update
         condition_update_data = {
             "weight": int(pet_data.get('weight')) if pet_data.get('weight') else 0,
             "health_condition": pet_data.get('health_condition'),
@@ -905,11 +815,9 @@ async def admin_edit_pet():
             "previous_owner": int(pet_data.get('previous_owner')) if pet_data.get('previous_owner') else 0
         }
 
-        # Add vaccination_date to update if it was parsed successfully
         if formatted_vaccination_date:
             condition_update_data["vaccination_date"] = formatted_vaccination_date
 
-        # Update Pet_Condition collection
         await pet_condition_collection.update_one(
             {"pet_condition_id": pet_condition_id},
             {"$set": condition_update_data}
@@ -935,7 +843,6 @@ async def admin_add_pet():
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
-    # get collection references
     users_collection = db['Users']
     pet_condition_collection = db['Pet_Condition']
     pet_info_collection = db['Pets_Info']
@@ -1036,13 +943,11 @@ async def admin_get_users():
 
     try:
         users_collection = db['Users']
-
-        # Check if the user has admin permissions
         user = await users_collection.find_one({"user_id": user_id})
+
         if not user or user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Query all users and return specific fields
         users = await users_collection.find({}, {"user_id": 1, "username": 1, "role": 1, "_id": 0}).to_list(length=None)
 
         return jsonify({
@@ -1067,12 +972,10 @@ async def admin_delete_user(user_id):
     try:
         users_collection = db['Users']
 
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Delete the user
         result = await users_collection.delete_one({"user_id": user_id})
 
         if result.deleted_count == 0:
@@ -1103,19 +1006,15 @@ async def admin_add_user():
     try:
         users_collection = db['Users']
 
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Generate a hashed password
         hashed_password = generate_password_hash(password)
 
-        # Find the current maximum user_id and increment it
         last_user = await users_collection.find_one(sort=[("user_id", -1)])
         next_user_id = last_user['user_id'] + 1 if last_user else 1
 
-        # Insert the new user
         new_user = {
             "user_id": next_user_id,
             "username": username,
@@ -1144,12 +1043,10 @@ async def admin_get_user(user_id):
     try:
         users_collection = db['Users']
 
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
-
-        # Fetch the user details
+        
         user = await users_collection.find_one({"user_id": user_id}, {"_id": 0, "user_id": 1, "username": 1, "role": 1})
 
         if not user:
@@ -1175,41 +1072,33 @@ async def admin_update_user(user_id):
     username = data.get('username')
     role = data.get('role')
 
-    # Ensure all required fields are provided
     if not all([admin_id, username, role]):
         return jsonify({"error": "All fields are required"}), 400
 
-    # Connect to the database
     db = await get_db_connection()
     if db is None:
         return jsonify({"error": "Database connection failed"}), 500
 
     try:
         users_collection = db['Users']
-
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Retrieve the user being updated to check the current role
         user = await users_collection.find_one({"user_id": user_id})
         if not user:
             return jsonify({"error": "User not found"}), 404
 
-        # Check if the update involves changing the role from "user" to "admin"
         current_role = user.get("role")
         if current_role == "adopter" and role == "admin":
-            # Log or notify about the privilege escalation for audit purposes (optional)
             print(f"Escalating privileges for user_id {user_id} from 'adopter' to 'admin'.")
 
-        # Update the user information, including the role
+
         result = await users_collection.update_one(
             {"user_id": user_id},
             {"$set": {"username": username, "role": role}}
         )
 
-        # Check if any document was modified
         if result.matched_count == 0:
             return jsonify({"error": "User not found or no changes made"}), 404
 
@@ -1243,12 +1132,10 @@ async def admin_get_applications():
         applications_collection = db['Applications']
         pets_info_collection = db['Pets_Info']
 
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": admin_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Aggregate data from Applications, Users, and Pets_Info collections
         applications = await applications_collection.aggregate([
             {
                 "$lookup": {
@@ -1266,10 +1153,8 @@ async def admin_get_applications():
                     "as": "pet_info"
                 }
             },
-            # Unwind user_info and pet_info arrays
             {"$unwind": "$user_info"},
             {"$unwind": "$pet_info"},
-            # Project only the needed fields
             {
                 "$project": {
                     "application_id": 1,
@@ -1283,7 +1168,6 @@ async def admin_get_applications():
             }
         ]).to_list(length=None)
 
-        # Convert ObjectId fields to strings
         for application in applications:
             application['_id'] = str(application['_id'])
 
@@ -1315,14 +1199,12 @@ async def admin_get_application_detail(application_id):
         applications_collection = db['Applications']
         pets_info_collection = db['Pets_Info']
 
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": user_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Aggregate data from Applications, Users, and Pets_Info collections
         application_detail = await applications_collection.aggregate([
-            {"$match": {"application_id": application_id}},  # Match specific application ID
+            {"$match": {"application_id": application_id}}, 
             {"$lookup": {
                 "from": "Users",
                 "localField": "user_id",
@@ -1354,14 +1236,12 @@ async def admin_get_application_detail(application_id):
             }}
         ]).to_list(length=None)
 
-        # Handle case if no application is found
         if not application_detail:
             return jsonify({
                 "status": "error",
                 "message": "Application not found"
             }), 404
         
-        # Convert MongoDB's date to ISO format
         application = application_detail[0]
         if 'submission_date' in application and isinstance(application['submission_date'], datetime):
             application['submission_date'] = application['submission_date'].isoformat()
@@ -1457,7 +1337,6 @@ async def update_application_status(application_id):
                 })
 
         except ValueError as e:
-            # handle validation errors
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             # rollback the transaction in case of an error
@@ -1482,14 +1361,11 @@ async def admin_get_adoptions():
         pets_info_collection = db['Pets_Info']
         applications_collection = db['Applications']
 
-        # Check if the requesting user has admin permissions
         admin_user = await users_collection.find_one({"user_id": user_id})
         if not admin_user or admin_user.get("role") != "admin":
             return jsonify({"error": "Invalid Permissions"}), 403
 
-        # Aggregate data from Adoptions, Users, Pets_Info, and Applications collections
         adoptions = await adoptions_collection.aggregate([
-            # Lookup adopter details from Users collection
             {
                 "$lookup": {
                     "from": "Users",
@@ -1498,9 +1374,7 @@ async def admin_get_adoptions():
                     "as": "adopter_info"
                 }
             },
-            {"$unwind": "$adopter_info"},  # Unwind the result to flatten the array
-
-            # Lookup pet details from Pets_Info collection
+            {"$unwind": "$adopter_info"}, 
             {
                 "$lookup": {
                     "from": "Pets_Info",
@@ -1509,9 +1383,8 @@ async def admin_get_adoptions():
                     "as": "pet_info"
                 }
             },
-            {"$unwind": "$pet_info"},  # Unwind the result to flatten the array
+            {"$unwind": "$pet_info"}, 
 
-            # Lookup application details from Applications collection
             {
                 "$lookup": {
                     "from": "Applications",
@@ -1520,9 +1393,7 @@ async def admin_get_adoptions():
                     "as": "application_info"
                 }
             },
-            {"$unwind": "$application_info"},  # Unwind the result to flatten the array
-
-            # Project only the fields needed for the response
+            {"$unwind": "$application_info"}, 
             {
                 "$project": {
                     "adoption_id": 1,
@@ -1538,11 +1409,9 @@ async def admin_get_adoptions():
                     "application_status": "$application_info.status"
                 }
             },
-            # Sort by adoption_date in descending order
             {"$sort": {"adoption_date": -1}}
         ]).to_list(length=None)
 
-        # Convert ObjectId fields and datetime to strings for JSON serialization
         for adoption in adoptions:
             for key, value in adoption.items():
                 if isinstance(value, ObjectId):
@@ -1573,9 +1442,3 @@ if __name__ == '__main__':
         loop.run_until_complete(create_indexes(db))
 
     app.run(debug=True)
-
-
-
-# Docker
-# if __name__ == '__main__':
-#     app.run(host='0.0.0.0', port=5000)
