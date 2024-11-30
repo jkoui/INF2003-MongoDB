@@ -1,0 +1,34 @@
+{
+    "basic_name_search": {
+        "avg_response_time": 376.90452575683594,
+        "max_response_time": 604.8767566680908,
+        "min_response_time": 326.38001441955566,
+        "std_dev_response": 46.81660818551145,
+        "avg_memory_delta": 0.038125,
+        "max_memory_delta": 1.40625
+    },
+    "complex_filter": {
+        "avg_response_time": 377.640643119812,
+        "max_response_time": 458.9540958404541,
+        "min_response_time": 333.482027053833,
+        "std_dev_response": 32.81941836337486,
+        "avg_memory_delta": 0.000625,
+        "max_memory_delta": 0.015625
+    },
+    "health_only": {
+        "avg_response_time": 404.4292211532593,
+        "max_response_time": 484.24386978149414,
+        "min_response_time": 356.36091232299805,
+        "std_dev_response": 27.232118089010626,
+        "avg_memory_delta": 0.0109375,
+        "max_memory_delta": 0.046875
+    },
+    "gender_sterilisation": {
+        "avg_response_time": 391.0869550704956,
+        "max_response_time": 452.9869556427002,
+        "min_response_time": 331.14004135131836,
+        "std_dev_response": 25.701093494002645,
+        "avg_memory_delta": 0.00125,
+        "max_memory_delta": 0.03125
+    }
+}

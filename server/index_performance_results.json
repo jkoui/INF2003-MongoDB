@@ -1,0 +1,47 @@
+{
+    "indexed_type": {
+        "avg_response_time": 684.7656202316284,
+        "max_response_time": 7034.037113189697,
+        "min_response_time": 400.7449150085449,
+        "std_dev_response": 966.1518272350006,
+        "avg_memory_usage": 0.03375,
+        "max_memory_usage": 1.375,
+        "num_successful_requests": 50
+    },
+    "indexed_health": {
+        "avg_response_time": 502.4613571166992,
+        "max_response_time": 711.7919921875,
+        "min_response_time": 401.3388156890869,
+        "std_dev_response": 65.17620914411631,
+        "avg_memory_usage": 0.018125,
+        "max_memory_usage": 0.109375,
+        "num_successful_requests": 50
+    },
+    "indexed_sterilisation": {
+        "avg_response_time": 490.5265808105469,
+        "max_response_time": 1875.544786453247,
+        "min_response_time": 396.4710235595703,
+        "std_dev_response": 210.13873777928663,
+        "avg_memory_usage": 0.001875,
+        "max_memory_usage": 0.03125,
+        "num_successful_requests": 50
+    },
+    "combined_indexed": {
+        "avg_response_time": 586.6052436828613,
+        "max_response_time": 2564.37611579895,
+        "min_response_time": 416.97001457214355,
+        "std_dev_response": 410.6333590367285,
+        "avg_memory_usage": 0.0,
+        "max_memory_usage": 0.0,
+        "num_successful_requests": 50
+    },
+    "non_indexed": {
+        "avg_response_time": 542.6916646957397,
+        "max_response_time": 2642.7557468414307,
+        "min_response_time": 404.22773361206055,
+        "std_dev_response": 310.8946656631485,
+        "avg_memory_usage": 0.0,
+        "max_memory_usage": 0.0,
+        "num_successful_requests": 50
+    }
+}

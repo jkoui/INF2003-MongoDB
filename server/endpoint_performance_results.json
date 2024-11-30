@@ -1,0 +1,47 @@
+{
+    "get_all_pets": {
+        "avg_response_time": 626.9214630126953,
+        "max_response_time": 2676.6128540039062,
+        "min_response_time": 416.7308807373047,
+        "std_dev_response": 388.74840568198346,
+        "avg_memory_usage": 0.0603125,
+        "max_memory_usage": 1.515625,
+        "error_rate": 0.0
+    },
+    "get_top3_pets": {
+        "avg_response_time": 483.4130382537842,
+        "max_response_time": 609.6158027648926,
+        "min_response_time": 370.04590034484863,
+        "std_dev_response": 53.36011637909133,
+        "avg_memory_usage": 0.0,
+        "max_memory_usage": 0.0,
+        "error_rate": 0.0
+    },
+    "admin_get_users": {
+        "avg_response_time": 518.8227701187134,
+        "max_response_time": 2533.663034439087,
+        "min_response_time": 397.75896072387695,
+        "std_dev_response": 303.3086430015686,
+        "avg_memory_usage": 0.000625,
+        "max_memory_usage": 0.015625,
+        "error_rate": 0.0
+    },
+    "admin_get_applications": {
+        "avg_response_time": 505.9922409057617,
+        "max_response_time": 2601.0658740997314,
+        "min_response_time": 383.00204277038574,
+        "std_dev_response": 308.28378077844707,
+        "avg_memory_usage": 0.0,
+        "max_memory_usage": 0.0,
+        "error_rate": 0.0
+    },
+    "admin_get_adoptions": {
+        "avg_response_time": 476.83637619018555,
+        "max_response_time": 595.0040817260742,
+        "min_response_time": 399.1360664367676,
+        "std_dev_response": 46.41261923259958,
+        "avg_memory_usage": 0.0,
+        "max_memory_usage": 0.0,
+        "error_rate": 0.0
+    }
+}
